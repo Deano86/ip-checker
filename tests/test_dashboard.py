@@ -152,11 +152,19 @@ class HTTPTests(unittest.TestCase):
 
     def test_domain_lookup_needs_no_secrets(self):
         result = {'report': {'Domain': 'example.com', 'Registration Lookup': 'OK'}, 'records': [], 'queries': [], 'health': 'OK'}
-        with patch.object(dashboard.domain_lookup, 'lookup', return_value=result) as lookup:
+        with patch.object(dashboard, 'secret_values', return_value={}), patch.object(dashboard.domain_lookup, 'lookup', return_value=result) as lookup:
             status, body, _ = self.request('/api/domain', {'domain': 'EXAMPLE.COM'})
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)['report']['Domain'], 'example.com')
-        lookup.assert_called_once_with('example.com')
+        lookup.assert_called_once_with('example.com', None)
+
+    def test_domain_key_stays_on_server(self):
+        result = {'report': {'Domain': 'example.com'}, 'records': [], 'queries': [], 'health': 'OK', 'reputation': []}
+        with patch.object(dashboard, 'secret_values', return_value={'SPAMHAUS_KEY': 'private-sentinel'}), patch.object(dashboard.domain_lookup, 'lookup', return_value=result) as lookup:
+            status, body, _ = self.request('/api/domain', {'domain': 'example.com'})
+        self.assertEqual(status, 200)
+        self.assertNotIn(b'private-sentinel', body)
+        lookup.assert_called_once_with('example.com', 'private-sentinel')
 
     def test_invalid_and_cross_origin_domain_requests_are_rejected(self):
         self.assertEqual(self.request('/api/domain', {'domain': '127.0.0.1'})[0], 400)

@@ -257,6 +257,20 @@ function renderDomain(result) {
   $('domain-report').hidden=false;
   $('domain-result-name').textContent=result.report.Domain;
   $('domain-partial').hidden=result.health!=='PARTIAL';
+  $('domain-reputation').replaceChildren();
+  for(const check of result.reputation || []) {
+    const card=element('article','domain-reputation-card');
+    card.append(element('h4','','Spamhaus '+check.list));
+    const label=check.listed==='YES'?(check.list==='ZRD'?'Recently observed':'Listed'):check.listed==='NO'?'No listing returned':check.status==='NOT_CONFIGURED'?'Not configured':'Unknown';
+    card.append(element('strong',check.listed==='YES'?'domain-listing-positive':'',label));
+    card.append(element('p','',check.list==='ZRD'?'Recently observed domain dataset':'Domain block list'));
+    card.append(element('span','badge '+(check.listed==='YES'?(check.list==='ZRD'?'yes':'threat'):check.listed==='NO'?'no':'unknown'),check.status.replaceAll('_',' ')));
+    if(check.categories.length) card.append(element('p','',check.categories.join(' · ')));
+    if(check.codes.length) card.append(element('small','','Return codes: '+check.codes.join(', ')));
+    if(check.status==='NOT_CONFIGURED') card.append(element('p','','Add SPAMHAUS_KEY to .secrets to enable this check.'));
+    if(check.listed==='UNKNOWN' && check.status!=='NOT_CONFIGURED') card.append(element('p','','Check DQS key access to this dataset and server DNS connectivity.'));
+    $('domain-reputation').append(card);
+  }
   $('domain-fields').replaceChildren();
   for(const [key,value] of Object.entries(result.report)) {
     const line=element('div','detail-row'); line.append(element('dt','',key),element('dd','',value || 'UNKNOWN')); $('domain-fields').append(line);
@@ -280,6 +294,9 @@ $('domain-export').addEventListener('click',()=> {
   const quote=value=>{value=String(value); if(/^[=+@-]/.test(value.trimStart())) value="'"+value; return '"'+value.replaceAll('"','""')+'"';};
   const rows=[['Section','Field / type','Value','TTL (seconds)']];
   Object.entries(domainResult.report).forEach(([key,value])=>rows.push(['Registration',key,value,'']));
+  (domainResult.reputation || []).forEach(check=> {
+    rows.push(['Spamhaus',check.list+' status',check.status,''],['Spamhaus',check.list+' listed',check.listed,''],['Spamhaus',check.list+' categories',check.categories.join('; '),''],['Spamhaus',check.list+' codes',check.codes.join('; '),'']);
+  });
   domainResult.queries.forEach(query=>rows.push(['DNS query',query.type,query.status,'']));
   domainResult.records.forEach(record=>rows.push(['DNS record',record.Type+' '+record.Name,record.Value,record.TTL]));
   const csv=rows.map(row=>row.map(quote).join(',')).join('\r\n');

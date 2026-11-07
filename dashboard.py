@@ -252,7 +252,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not DOMAIN_SLOTS.acquire(blocking=False):
                     return self.send(429, {'error': 'Domain lookups are busy. Try again shortly.'})
                 try:
-                    return self.send(200, domain_lookup.lookup(domain))
+                    return self.send(200, domain_lookup.lookup(domain, secret_values().get('SPAMHAUS_KEY')))
                 finally:
                     DOMAIN_SLOTS.release()
             if path == '/api/email':

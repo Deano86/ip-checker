@@ -312,5 +312,33 @@ displayed as text; private/insecure RDAP redirects are rejected.
 References: [RDAP.org](https://about.rdap.org/),
 [Cloudflare DNS JSON API](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/).
 
+## Spamhaus domain reputation: DBL and ZRD
+
+Domain lookups now also query Spamhaus **DBL** (domain reputation) and
+**ZRD** (domains first observed within the past 24 hours). They use your
+existing `SPAMHAUS_KEY` in `.secrets`, through `dig` and the server's DNS
+resolver. Your DQS account must permit both datasets. Registration and
+public DNS lookups still work without a Spamhaus key; those checks then
+show NOT_CONFIGURED. Keyed Spamhaus queries are not sent to the public
+Cloudflare DNS-over-HTTPS endpoint used for ordinary DNS records.
+
+DBL reports each returned category, including phishing, malware, botnet
+command-and-control and abused legitimate domains. These categories are
+kept distinct. ZRD reports the first-observed age band; a positive ZRD
+result does not mean that the domain is malicious. These checks query the
+submitted hostname, not every parent domain, linked URL or resolved IP.
+The existing IP scan still checks Spamhaus ZEN separately.
+
+Only a successful NXDOMAIN response is treated as no listing. DNS failures,
+empty answers, query/access error codes and unexpected replies stay UNKNOWN.
+The keyed query name and raw DNS output are never included in API responses,
+browser results or CSV exports. CSV exports include statuses, listing values,
+categories and safe return codes. Enabled checks that fail mark lookup health
+as PARTIAL. An unlisted domain is not guaranteed safe; no automatic blocking is added.
+
+After updating the image, run a new domain lookup. No new key variable is needed.
+References: [Spamhaus DQS queries](https://docs.spamhaus.com/datasets/docs/source/70-access-methods/data-query-service/040-dqs-queries.html),
+[DBL and ZRD return codes](https://docs.spamhaus.com/datasets/docs/source/10-data-type-documentation/datasets/040-zones.html).
+
 References: [IPinfo Lite response fields](https://ipinfo.io/developers/lite-api),
 [IP2Location response fields and error codes](https://www.ip2location.io/ip2location-documentation).

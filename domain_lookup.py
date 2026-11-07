@@ -1,4 +1,4 @@
-"""Public domain registration (RDAP) and DNS lookups, without API keys."""
+"""Public registration and DNS lookups, with optional Spamhaus DQS checks."""
 from concurrent.futures import ThreadPoolExecutor
 import ipaddress
 import json
@@ -7,6 +7,7 @@ import socket
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+import spamhaus_domain
 
 TYPES = {'A': 1, 'AAAA': 28, 'MX': 15, 'NS': 2, 'TXT': 16, 'CNAME': 5, 'SOA': 6}
 
@@ -128,12 +129,14 @@ def dns_query(domain, record_type):
     return {'type': record_type, 'status': 'OK' if records else 'NO_RECORDS', 'records': records}
 
 
-def lookup(domain):
-    with ThreadPoolExecutor(max_workers=8) as pool:
+def lookup(domain, spamhaus_key=None):
+    with ThreadPoolExecutor(max_workers=10) as pool:
         rdap = pool.submit(get_json, 'https://rdap.org/domain/' + domain, 'application/rdap+json')
         dns_futures = [pool.submit(dns_query, domain, record_type) for record_type in TYPES]
+        spamhaus_futures = [pool.submit(spamhaus_domain.lookup, domain, spamhaus_key, zone) for zone in ('dbl', 'zrd')]
         data, state = rdap.result()
         queries = [future.result() for future in dns_futures]
+        reputation = [future.result() for future in spamhaus_futures]
     report = registration(domain, data, state)
     records, seen = [], set()
     for query in queries:
@@ -143,6 +146,8 @@ def lookup(domain):
                 seen.add(key)
                 records.append(record)
     healthy = state == 'OK' and all(query['status'] in ('OK', 'NO_RECORDS') for query in queries)
+    if spamhaus_key:
+        healthy = healthy and all(check['status'] == 'OK' for check in reputation)
     return {'report': report, 'records': records,
             'queries': [{'type': query['type'], 'status': query['status']} for query in queries],
-            'health': 'OK' if healthy else 'PARTIAL'}
+            'health': 'OK' if healthy else 'PARTIAL', 'reputation': reputation}

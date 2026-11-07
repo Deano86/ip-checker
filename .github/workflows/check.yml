@@ -21,7 +21,7 @@ jobs:
         run: python3 -m unittest discover -s tests -v
       - name: Build and smoke-test dashboard container
         run: |
-          chmod -R go-rwx dashboard.py provider_data.py email_lookup.py domain_lookup.py ip-checker.sh web
+          chmod -R go-rwx dashboard.py provider_data.py email_lookup.py domain_lookup.py spamhaus_domain.py ip-checker.sh web
           docker build -t ip-checker:test .
           docker run -d --user 12345:12345 --read-only --tmpfs /tmp:mode=1777,size=32m --name ip-checker-test -p 127.0.0.1:8080:8080 ip-checker:test
           trap 'docker logs ip-checker-test; docker rm -f ip-checker-test' EXIT
