@@ -35,3 +35,9 @@
 [data-theme="dark"] .empty h3{color:#b8cdd8}[data-theme="dark"] .empty p{color:#94abba}
 @media(max-width:640px){.email-input-row{flex-direction:column}.email-summary{grid-template-columns:1fr;padding:10px 17px}.email-summary .risk-card{border-right:0;border-bottom:1px solid var(--line);padding-bottom:20px}.email-entry form,.email-fields{padding-left:17px;padding-right:17px}.email-highlights{gap:10px}.email-highlight{padding:15px}.topbar-right{gap:8px}.theme-toggle{font-size:9px}.topbar .server-pill{display:none}.sidebar nav{flex-wrap:wrap}.nav-item{width:calc(50% - 3px)}}
 @media(max-width:1000px){.email-summary{grid-template-columns:1fr}.email-summary .risk-card{border-right:0;border-bottom:1px solid var(--line);padding-bottom:20px}}.nav-item:not(.active) .nav-dot{display:none}
+
+/* Summary cards use the same subdued surface as the rest of dark mode. */
+[data-theme="dark"] .metric{background:#16222c;border-color:#293844;color:#b9c8d1}
+[data-theme="dark"] .metric-label{color:#a0b2bf}
+[data-theme="dark"] .metric-value{color:#b9c8d1}
+[data-theme="dark"] .metric .metric-caption{color:#8fa4b3}
