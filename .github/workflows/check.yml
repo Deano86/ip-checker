@@ -15,3 +15,10 @@ jobs:
         run: node --check web/app.js
       - name: Run offline regression tests
         run: python3 -m unittest discover -s tests -v
+      - name: Build and smoke-test dashboard container
+        run: |
+          docker build -t ip-checker:test .
+          docker run -d --name ip-checker-test -p 127.0.0.1:8080:8080 ip-checker:test
+          trap 'docker rm -f ip-checker-test' EXIT
+          curl --fail --retry 10 --retry-connrefused --retry-delay 1 http://127.0.0.1:8080/api/config | jq -e '.ready == false'
+          curl --fail http://127.0.0.1:8080/ -o /dev/null
