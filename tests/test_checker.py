@@ -22,6 +22,7 @@ class CheckerTests(unittest.TestCase):
         self.base = Path(self.tmp.name)
         self.script = self.base / 'ip-checker.sh'
         shutil.copyfile(SCRIPT, self.script)
+        shutil.copyfile(ROOT / 'provider_data.py', self.base / 'provider_data.py')
         (self.base / '.secrets').write_text(
             "IPINFO_KEY='test'\nIP2_KEY='test'\nPROXY_KEY='test'\nSPAMHAUS_KEY='test'\n"
         )
@@ -30,10 +31,26 @@ class CheckerTests(unittest.TestCase):
         self.bin = self.base / 'bin'
         self.bin.mkdir()
         self.stub('curl', '''#!/usr/bin/env bash
+trap 'printf "\\n%s" "${MOCK_HTTP:-200}"' EXIT
 case "$*" in
   *rdap*) echo '{"cidr0_cidrs":[{"v4prefix":"1.1.1.0","length":24}]}' ;;
-  *ipinfo*) echo '{"org":"AS13335 Example Provider"}' ;;
-  *ip2location*) echo '{"is_proxy":false}' ;;
+  *api.ipinfo.io/lite*)
+    if [[ ${MOCK_LITE:-missing} == ok ]]; then echo '{"asn":"AS13335","as_name":"Lite Provider"}'; else echo '{}'; fi ;;
+  *ipinfo*)
+    case ${MOCK_INFO:-ok} in
+      auth) MOCK_HTTP=401; echo '{"error":{"message":"Invalid token secret-sentinel"}}' ;;
+      quota) MOCK_HTTP=429; echo '{}' ;;
+      timeout) exit 28 ;;
+      missing) echo '{}' ;;
+      *) echo '{"org":"AS13335 Example Provider"}' ;;
+    esac ;;
+  *ip2location*)
+    case ${MOCK_IP2:-ok} in
+      auth) echo '{"error":{"error_code":10000,"error_message":"secret-sentinel"}}' ;;
+      fallback) echo '{"is_proxy":false,"asn":"15169","as":"Fallback Provider"}' ;;
+      missing) echo '{}' ;;
+      *) echo '{"is_proxy":false}' ;;
+    esac ;;
   *ipqualityscore*)
     case ${MOCK_IPQS:-negative} in
       error) echo '{"success":false,"message":"Invalid key"}' ;;
@@ -59,7 +76,7 @@ case ${MOCK_DNS:-negative} in
 esac
 ''')
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH'])
-        for key in ('IP_CHECKER_SECRETS', 'MOCK_PC', 'MOCK_DNS', 'MOCK_IPQS', 'IPQS_KEY'):
+        for key in ('IP_CHECKER_SECRETS', 'MOCK_PC', 'MOCK_DNS', 'MOCK_IPQS', 'IPQS_KEY', 'MOCK_HTTP', 'MOCK_INFO', 'MOCK_LITE', 'MOCK_IP2'):
             self.env.pop(key, None)
 
     def stub(self, name, content):
@@ -78,7 +95,7 @@ esac
         with (self.base / 'ip-results.csv').open(newline='') as handle:
             rows = list(csv.DictReader(handle))
         self.assertEqual(len(rows), 1)
-        self.assertEqual(len(rows[0]), 26)
+        self.assertEqual(len(rows[0]), 33)
         self.assertIn('Skipping invalid/non-public IP', result.stderr)
         return rows[0]
 
@@ -118,6 +135,7 @@ esac
             with self.subTest(state=state):
                 row = self.row(MOCK_IPQS=state)
                 self.assertEqual(row['IPQS Status'], 'ERROR')
+                self.assertNotEqual(row['IPQS Detail'], 'NOT_CONFIGURED')
                 self.assertEqual(row['IPQS Fraud Score'], 'UNKNOWN')
                 self.assertEqual(row['Anonymisation'], 'UNKNOWN')
                 self.assertEqual(row['Review'], 'INCOMPLETE')
@@ -126,6 +144,40 @@ esac
         self.enable_ipqs()
         row = self.row(MOCK_IPQS='missing')
         self.assertEqual(row['IPQS Proxy'], 'UNKNOWN')
+        self.assertEqual(row['Review'], 'INCOMPLETE')
+        self.assertEqual(row['IPQS Bot'], 'UNKNOWN')
+        self.assertEqual(row['Lookup Health'], 'PARTIAL')
+
+    def test_lite_fields_recover_network_identity(self):
+        row = self.row(MOCK_INFO='auth', MOCK_LITE='ok')
+        self.assertEqual(row['ASN'], 'AS13335')
+        self.assertEqual(row['Provider'], 'Lite Provider')
+        self.assertEqual(row['ASN Source'], 'IPinfo Lite')
+        self.assertIn('Legacy: AUTH_ERROR; Lite: OK', row['IPinfo Status'])
+        self.assertEqual(row['Lookup Health'], 'OK')
+
+    def test_ip2_fallback_preserves_original_failure_diagnostics(self):
+        row = self.row(MOCK_INFO='auth', MOCK_IP2='fallback')
+        self.assertEqual(row['ASN'], 'AS15169')
+        self.assertEqual(row['Provider'], 'Fallback Provider')
+        self.assertEqual(row['ASN Source'], 'IP2Location')
+        self.assertEqual(row['Lookup Health'], 'PARTIAL')
+        self.assertNotIn('secret-sentinel', str(row))
+
+    def test_provider_errors_are_visible_even_when_flagged(self):
+        self.enable_ipqs()
+        row = self.row(MOCK_INFO='quota', MOCK_IP2='auth', MOCK_IPQS='positive')
+        self.assertIn('RATE_LIMIT_OR_QUOTA', row['IPinfo Status'])
+        self.assertEqual(row['IP2Location Status'], 'AUTH_OR_QUOTA_ERROR')
+        self.assertEqual(row['IP2 Proxy'], 'UNKNOWN')
+        self.assertIn('VPN', row['Review'])
+        self.assertEqual(row['Lookup Health'], 'PARTIAL')
+        self.assertNotIn('secret-sentinel', str(row))
+
+    def test_timeout_and_missing_proxy_field(self):
+        row = self.row(MOCK_INFO='timeout', MOCK_IP2='missing')
+        self.assertIn('TIMEOUT', row['IPinfo Status'])
+        self.assertEqual(row['IP2Location Status'], 'MISSING_PROXY_FIELD')
         self.assertEqual(row['Review'], 'INCOMPLETE')
 
     def test_partial_provider_failure_is_incomplete(self):

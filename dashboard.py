@@ -115,7 +115,7 @@ class ScanStore:
                 env['IP_CHECKER_SECRETS'] = str(Path(env.get('IP_CHECKER_SECRETS', str(ROOT / '.secrets'))).resolve())
                 process = subprocess.Popen(['bash', str(ROOT / 'ip-checker.sh'), str(input_file), str(output_file)],
                                            cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                deadline = time.monotonic() + max(210, len(addresses) * 210)
+                deadline = time.monotonic() + max(240, len(addresses) * 240)
                 while True:
                     done = process.poll() is not None
                     if output_file.exists():
@@ -123,7 +123,8 @@ class ScanStore:
                         contents = output_file.read_text(encoding='utf-8')
                         contents = contents[:contents.rfind('\n') + 1]
                         rows = list(csv.DictReader(io.StringIO(contents)))
-                        rows = [row for row in rows if len(row) == 26 and None not in row and all(v is not None for v in row.values())]
+                        rows = [row for row in rows if len(row) == 33 and None not in row and all(v is not None for v in row.values())]
+                        rows = [{k: ('UNKNOWN' if v is None or not str(v).strip() else v) for k, v in row.items()} for row in rows]
                         with self.lock:
                             self.scans[scan_id]['rows'] = rows
                             self.scans[scan_id]['completed'] = len(rows)

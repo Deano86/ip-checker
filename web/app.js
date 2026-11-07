@@ -107,7 +107,7 @@ function render() {
   $('export').disabled = !rows.length;
   const query = $('search').value.toLowerCase(), filter = $('filter').value;
   let visible = rows.filter(row => Object.values(row).join(' ').toLowerCase().includes(query));
-  visible = visible.filter(row => filter==='all' || (filter==='flagged' && !['INCOMPLETE','NO_POSITIVE_DETECTION'].includes(row.Review)) || (filter==='incomplete' && row.Review==='INCOMPLETE') || (filter==='negative' && row.Review==='NO_POSITIVE_DETECTION'));
+  visible = visible.filter(row => filter==='all' || (filter==='flagged' && !['INCOMPLETE','NO_POSITIVE_DETECTION'].includes(row.Review)) || (filter==='incomplete' && (row.Review==='INCOMPLETE' || row['Lookup Health']==='PARTIAL')) || (filter==='negative' && row.Review==='NO_POSITIVE_DETECTION' && row['Lookup Health']!=='PARTIAL'));
   visible.sort((a,b)=>sortDirection*String(a[sortKey]).localeCompare(String(b[sortKey]),undefined,{numeric:true}));
   $('results-body').replaceChildren();
   for (const row of visible) {
@@ -121,7 +121,7 @@ function render() {
     tr.append(scoreCell);
     const review = element('td');
     const label = row.Review==='NO_POSITIVE_DETECTION'?'No positives':row.Review==='INCOMPLETE'?'Incomplete':row.Review.replaceAll('_',' ').replaceAll('+',' · ');
-    review.append(element('span','review-badge '+(row.Review==='NO_POSITIVE_DETECTION'?'negative':row.Review==='INCOMPLETE'?'incomplete':''),label)); tr.append(review);
+    review.append(element('span','review-badge '+(row.Review==='NO_POSITIVE_DETECTION'?'negative':row.Review==='INCOMPLETE'?'incomplete':''),label)); if (row['Lookup Health']==='PARTIAL') review.append(element('small','partial-note','Partial provider data')); tr.append(review);
     const detailCell = element('td'); const button = element('button','text-button','↗'); button.setAttribute('aria-label','View details for '+row['IP Address']);
     detailCell.append(button); tr.append(detailCell); tr.addEventListener('click',()=>openDetails(row)); $('results-body').append(tr);
   }
@@ -133,7 +133,8 @@ function render() {
 function openDetails(row) {
   $('detail-ip').textContent = row['IP Address'];
   const dl=element('dl');
-  Object.entries(row).forEach(([key,value])=> { const line=element('div','detail-row'); line.append(element('dt','',key),element('dd','',value)); dl.append(line); });
+  if (row['Lookup Health']==='PARTIAL') dl.append(element('p','error','Some provider data is unavailable. See provider statuses below; positive detections still apply.'));
+  Object.entries(row).forEach(([key,value])=> { const line=element('div','detail-row'); line.append(element('dt','',key),element('dd','',value == null || String(value).trim()==='' ? 'UNKNOWN' : value)); dl.append(line); });
   $('detail-content').replaceChildren(dl); $('details').showModal();
 }
 $('close-details').addEventListener('click',()=>$('details').close());

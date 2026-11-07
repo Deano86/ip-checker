@@ -64,27 +64,36 @@ PY
 )
 ((${#IPS[@]})) || { echo 'No valid public IPv4 addresses.' >&2; exit 1; }
 
-# HTTP helper: valid JSON or {}. Errors do not become negative detections.
+# Preserve safe transport metadata, including bodies returned with HTTP errors.
 api_get() {
-    local response
-    response=$(curl -fsSL --connect-timeout 5 --max-time 18 "$@" 2>/dev/null) || { printf '{}\n'; return; }
+    local response code exit_code=0
+    response=$(curl -sSL --connect-timeout 5 --max-time 18 --write-out '\n%{http_code}' "$@" 2>/dev/null) || exit_code=$?
+    if ((exit_code)); then
+        if ((exit_code == 28)); then echo '{"_lookup_error":"TIMEOUT"}'; else echo '{"_lookup_error":"NETWORK_ERROR"}'; fi
+        return
+    fi
+    code=${response##*$'\n'}
+    response=${response%$'\n'*}
+    [[ "$code" =~ ^[0-9]{3}$ ]] || { echo '{"_lookup_error":"NETWORK_ERROR"}'; return; }
     if jq -e . >/dev/null 2>&1 <<< "$response"; then
-        printf '%s\n' "$response"
+        jq -c --argjson code "$((10#$code))" 'if type == "object" then . + {_http_status:$code} else {_lookup_error:"INVALID_RESPONSE",_http_status:$code} end' <<< "$response"
     else
-        printf '{}\n'
+        jq -cn --argjson code "$((10#$code))" '{_lookup_error:"INVALID_JSON",_http_status:$code}'
     fi
 }
 
 # Read a dotted JSON field. Missing and null values are UNKNOWN.
 json_flag() {
     local data="$1" path="$2"
-    jq -r --arg path "$path" '
+    local result
+    result=$(jq -r --arg path "$path" '
         def normalize:
           if . == true or . == 1 or . == "1" or . == "yes" or . == "YES" or . == "Y" then "YES"
           elif . == false or . == 0 or . == "0" or . == "no" or . == "NO" or . == "N" then "NO"
           else "UNKNOWN" end;
         getpath($path | split("."))? | normalize
-    ' <<< "$data" 2>/dev/null || echo UNKNOWN
+    ' <<< "$data" 2>/dev/null) || result=UNKNOWN
+    printf '%s\n' "${result:-UNKNOWN}"
 }
 
 # RDAP registered allocation. Try redirect service, then registries.
@@ -163,7 +172,7 @@ spamhaus_lookup() {
     printf '%s|YES\n' "$joined"
 }
 
-jq -rn '["IP Address","CIDR","ASN","Provider","IP2 Proxy","PC Anonymous","PC VPN","PC Proxy","PC Tor","PC Hosting","PC Network Type","PC Risk","PC Confidence","Spamhaus Lists","Spamhaus Status","Anonymisation","Hosting","Threat Listing","Review","IPQS Status","IPQS Fraud Score","IPQS Proxy","IPQS VPN","IPQS Tor","IPQS Recent Abuse","IPQS Bot"] | @csv' > "$OUTPUT" || { echo "Cannot write output: $OUTPUT" >&2; exit 1; }
+jq -rn '["IP Address","CIDR","ASN","Provider","IP2 Proxy","PC Anonymous","PC VPN","PC Proxy","PC Tor","PC Hosting","PC Network Type","PC Risk","PC Confidence","Spamhaus Lists","Spamhaus Status","Anonymisation","Hosting","Threat Listing","Review","IPQS Status","IPQS Fraud Score","IPQS Proxy","IPQS VPN","IPQS Tor","IPQS Recent Abuse","IPQS Bot","IPinfo Status","IP2Location Status","Proxycheck Status","IPQS Detail","ASN Source","Provider Source","Lookup Health"] | @csv' > "$OUTPUT" || { echo "Cannot write output: $OUTPUT" >&2; exit 1; }
 
 printf '\nLoaded %d unique public IPv4 addresses.\n\n' "${#IPS[@]}"
 printf '%-18s %-21s %-10s %-20s %-6s %-6s %-6s %-8s %-14s %s\n' IP CIDR ASN PROVIDER IP2 VPN TOR HOSTING SPAMHAUS REVIEW
@@ -172,21 +181,20 @@ printf '%s\n' '-----------------------------------------------------------------
 VPN_COUNT=0; PROXY_COUNT=0; HOST_COUNT=0; THREAT_COUNT=0; UNKNOWN_COUNT=0
 for IP in "${IPS[@]}"; do
     INFO=$(api_get -H "Authorization: Bearer $IPINFO_KEY" "https://ipinfo.io/$IP/json")
-    ORG=$(jq -r '.org // "UNKNOWN"' <<< "$INFO")
-    ASN=$(grep -oE '^AS[0-9]+' <<< "$ORG" || true)
-    ASN=${ASN:-UNKNOWN}
-    PROVIDER="$ORG"
-    [[ "$ASN" == UNKNOWN ]] || PROVIDER=${ORG#"$ASN "}
+    LITE='{}'
+    if ! jq -e '(.org | type) == "string" and (.org | length) > 0' >/dev/null 2>&1 <<< "$INFO"; then
+        LITE=$(api_get -H "Authorization: Bearer $IPINFO_KEY" "https://api.ipinfo.io/lite/$IP")
+    fi
 
     CIDR=$(get_cidr "$IP")
     IP2=$(api_get -G --data-urlencode "key=$IP2_KEY" --data-urlencode "ip=$IP" 'https://api.ip2location.io/')
     IP2_PROXY=$(json_flag "$IP2" is_proxy)
-    if jq -e '.error != null' >/dev/null 2>&1 <<< "$IP2"; then IP2_PROXY=UNKNOWN; fi
+    if jq -e '.error != null or ._lookup_error != null or (._http_status // 200) >= 400' >/dev/null 2>&1 <<< "$IP2"; then IP2_PROXY=UNKNOWN; fi
 
     PC=$(api_get -G --data-urlencode "key=$PROXY_KEY" "https://proxycheck.io/v3/$IP")
     PC_STATUS=$(jq -r '.status // "UNKNOWN"' <<< "$PC")
     PC_ENTRY=$(jq -c --arg ip "$IP" '.[$ip] // {}' <<< "$PC")
-    if [[ "${PC_STATUS,,}" != ok && "${PC_STATUS,,}" != warning ]]; then
+    if [[ "${PC_STATUS,,}" != ok && "${PC_STATUS,,}" != warning ]] || jq -e '._lookup_error != null or (._http_status // 200) >= 400' >/dev/null 2>&1 <<< "$PC"; then
         PC_ENTRY='{}'
         echo "proxycheck.io status for $IP: $PC_STATUS" >&2
     fi
@@ -205,9 +213,11 @@ for IP in "${IPS[@]}"; do
 
     IPQS_STATUS=NOT_CONFIGURED
     IPQS='{}'
+    IPQS_RAW='{}'
     if ((IPQS_ENABLED)); then
         IPQS=$(api_get -H "ipqs-key: $IPQS_KEY" -G --data-urlencode "ip=$IP" 'https://www.ipqualityscore.com/api/json/ip')
-        if jq -e '.success == true' >/dev/null 2>&1 <<< "$IPQS"; then
+        IPQS_RAW=$IPQS
+        if jq -e '.success == true and ._lookup_error == null and (._http_status // 200) < 400' >/dev/null 2>&1 <<< "$IPQS"; then
             IPQS_STATUS=OK
         else
             IPQS_STATUS=ERROR
@@ -221,9 +231,20 @@ for IP in "${IPS[@]}"; do
     IPQS_BOT=$(json_flag "$IPQS" bot_status)
     IPQS_SCORE=$(jq -r 'if (.fraud_score | type) == "number" then if .fraud_score >= 0 and .fraud_score <= 100 then .fraud_score else "UNKNOWN" end else "UNKNOWN" end' <<< "$IPQS")
 
+    META=$(jq -n --argjson info "$INFO" --argjson lite "$LITE" --argjson ip2 "$IP2" \
+        --argjson pc "$PC" --argjson ipqs "$IPQS_RAW" --arg ip "$IP" \
+        '{info:$info,lite:$lite,ip2:$ip2,pc:$pc,ipqs:$ipqs,ip:$ip}' | python3 "$BASE/provider_data.py") || exit 1
+    ASN=$(jq -r '.ASN' <<< "$META")
+    PROVIDER=$(jq -r '.Provider' <<< "$META")
+    HEALTH=$(jq -r '."Lookup Health"' <<< "$META")
+    if [[ "$IP2_PROXY" == UNKNOWN || "$PC_VPN" == UNKNOWN || "$PC_PROXY" == UNKNOWN || "$PC_TOR" == UNKNOWN || "$PC_ANON" == UNKNOWN || "$PC_HOSTING" == UNKNOWN ]] || { ((IPQS_ENABLED)) && [[ "$IPQS_BOT" == UNKNOWN || "$IPQS_ABUSE" == UNKNOWN || "$IPQS_SCORE" == UNKNOWN || "$IPQS_PROXY" == UNKNOWN || "$IPQS_VPN" == UNKNOWN || "$IPQS_TOR" == UNKNOWN ]]; }; then
+        HEALTH=PARTIAL
+    fi
+
     SH=$(spamhaus_lookup "$IP")
     SH_LISTS=${SH%%|*}
     SH_STATUS=${SH##*|}
+    [[ "$SH_STATUS" != UNKNOWN ]] || HEALTH=PARTIAL
     THREAT=NO
     if [[ "$SH_LISTS" == *SBL* || "$SH_LISTS" == *XBL* || "$SH_LISTS" == *CSS* || "$SH_LISTS" == *DROP* ]]; then
         THREAT=YES
@@ -252,7 +273,7 @@ for IP in "${IPS[@]}"; do
     [[ "$THREAT" != YES ]] || FLAGS+=(SPAMHAUS_THREAT)
     if ((${#FLAGS[@]})); then
         REVIEW=$(IFS=+; echo "${FLAGS[*]}")
-    elif [[ "$ANON" == UNKNOWN || "$PC_HOSTING" == UNKNOWN || "$THREAT" == UNKNOWN ]] || { ((IPQS_ENABLED)) && [[ "$IPQS_SCORE" == UNKNOWN || "$IPQS_ABUSE" == UNKNOWN || "$IPQS_BOT" == UNKNOWN ]]; }; then
+    elif [[ "$ANON" == UNKNOWN || "$PC_HOSTING" == UNKNOWN || "$THREAT" == UNKNOWN || "$HEALTH" == PARTIAL ]] || { ((IPQS_ENABLED)) && [[ "$IPQS_SCORE" == UNKNOWN || "$IPQS_ABUSE" == UNKNOWN || "$IPQS_BOT" == UNKNOWN ]]; }; then
         REVIEW=INCOMPLETE
         ((UNKNOWN_COUNT+=1))
     else
@@ -269,8 +290,8 @@ for IP in "${IPS[@]}"; do
         --arg shstatus "$SH_STATUS" --arg anonymisation "$ANON" --arg threat "$THREAT" \
         --arg review "$REVIEW" --arg qsstatus "$IPQS_STATUS" --arg qsscore "$IPQS_SCORE" \
         --arg qsproxy "$IPQS_PROXY" --arg qsvpn "$IPQS_VPN" --arg qstor "$IPQS_TOR" \
-        --arg qsabuse "$IPQS_ABUSE" --arg qsbot "$IPQS_BOT" \
-        '[$ip,$cidr,$asn,$provider,$ip2,$anon,$vpn,$proxy,$tor,$hosting,$network,$risk,$confidence,$sh,$shstatus,$anonymisation,$hosting,$threat,$review,$qsstatus,$qsscore,$qsproxy,$qsvpn,$qstor,$qsabuse,$qsbot] | @csv' >> "$OUTPUT" || { echo "Cannot append output: $OUTPUT" >&2; exit 1; }
+        --arg qsabuse "$IPQS_ABUSE" --arg qsbot "$IPQS_BOT" --argjson meta "$META" --arg health "$HEALTH" \
+        '[$ip,$cidr,$asn,$provider,$ip2,$anon,$vpn,$proxy,$tor,$hosting,$network,$risk,$confidence,$sh,$shstatus,$anonymisation,$hosting,$threat,$review,$qsstatus,$qsscore,$qsproxy,$qsvpn,$qstor,$qsabuse,$qsbot,$meta["IPinfo Status"],$meta["IP2Location Status"],$meta["Proxycheck Status"],$meta["IPQS Detail"],$meta["ASN Source"],$meta["Provider Source"],$health] | @csv' >> "$OUTPUT" || { echo "Cannot append output: $OUTPUT" >&2; exit 1; }
     sleep 0.2
 done
 printf '\nTotal: %d | VPN: %d | Other proxy/anonymous: %d | Hosting: %d | Spamhaus threat: %d | Incomplete: %d\n' \
