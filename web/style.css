@@ -41,3 +41,12 @@
 [data-theme="dark"] .metric-label{color:#a0b2bf}
 [data-theme="dark"] .metric-value{color:#b9c8d1}
 [data-theme="dark"] .metric .metric-caption{color:#8fa4b3}
+
+/* Scan details open in the centre, with a fixed header and a scrolling report. */
+#details{position:fixed;inset:0;margin:auto;width:min(900px,calc(100vw - 48px));height:fit-content;max-width:none;max-height:86vh;max-height:86dvh;padding:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 24px 90px #0006}
+#details[open]{display:flex;flex-direction:column}
+#details .drawer-head{flex-shrink:0;padding:24px 28px;margin:0;background:inherit}
+#details #detail-content{min-height:0;overflow:auto;overscroll-behavior:contain;padding:22px 28px 28px}
+#details::backdrop{background:#08121bb3;backdrop-filter:blur(3px)}
+html:has(#details[open]){overflow:hidden}
+@media(max-width:640px){#details{width:calc(100vw - 24px);max-height:90vh;max-height:90dvh;border-radius:10px}#details .drawer-head{padding:20px}#details #detail-content{padding:16px 20px 24px}}

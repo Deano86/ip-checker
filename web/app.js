@@ -152,7 +152,7 @@ function openDetails(row) {
   });
   table.append(body); comparison.append(table);
   comparison.append(element('p','','Active VPN/Tor is shown separately below; it is not the same as suspected VPN/Tor. IP2 does not supply separate VPN/Tor/hosting fields in our current lookup.'));
-  $('detail-content').replaceChildren(comparison,dl); $('details').showModal();
+  $('detail-content').replaceChildren(comparison,dl); $('details').showModal(); $('detail-content').scrollTop=0;
 }
 function setDial(name,value,notConfigured=false) {
   const dial=$('dial-'+name), score=IPSignals.score(value);
@@ -185,7 +185,11 @@ function renderGauges() {
 }
 $('risk-address').addEventListener('change',event=> {riskIP=event.target.value; renderGauges();});
 $('close-details').addEventListener('click',()=>$('details').close());
-$('details').addEventListener('click',event=> { if(event.target===$('details') && event.clientX < $('details').getBoundingClientRect().left) $('details').close(); });
+$('details').addEventListener('click',event=> {
+  if(event.target!==$('details')) return;
+  const rect=$('details').getBoundingClientRect();
+  if(event.clientX<rect.left || event.clientX>rect.right || event.clientY<rect.top || event.clientY>rect.bottom) $('details').close();
+});
 $('search').addEventListener('input',render); $('filter').addEventListener('change',render);
 document.querySelectorAll('[data-sort]').forEach(button=>button.addEventListener('click',()=> { sortDirection=sortKey===button.dataset.sort?-sortDirection:1; sortKey=button.dataset.sort; render(); }));
 $('export').addEventListener('click',()=> {
