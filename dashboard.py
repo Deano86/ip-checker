@@ -17,14 +17,15 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
+import email_lookup
 
 ROOT = Path(__file__).resolve().parent
 KEYS = {'IPinfo': 'IPINFO_KEY', 'IP2Location': 'IP2_KEY',
         'proxycheck.io': 'PROXY_KEY', 'Spamhaus': 'SPAMHAUS_KEY', 'IPQS': 'IPQS_KEY'}
 
 
-def configuration():
-    """Report presence only; never return secrets or execute the config."""
+def secret_values():
+    """Read simple assignments without executing the configuration."""
     path = Path(os.environ.get('IP_CHECKER_SECRETS', str(ROOT / '.secrets')))
     values = {}
     try:
@@ -38,6 +39,12 @@ def configuration():
                     pass
     except (OSError, UnicodeError):
         pass
+    return values
+
+
+def configuration():
+    """Report presence only; never return secrets or execute the config."""
+    values = secret_values()
     providers = [{'name': name, 'configured': bool(values.get(key)), 'required': name != 'IPQS'} for name, key in KEYS.items()]
     missing = [cmd for cmd in ('bash', 'curl', 'jq', 'dig', 'python3') if not shutil.which(cmd)]
     return {'providers': providers, 'missing_dependencies': missing,
@@ -153,6 +160,7 @@ class ScanStore:
 
 
 STORE = ScanStore()
+EMAIL_SLOTS = threading.BoundedSemaphore(2)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -197,6 +205,7 @@ class Handler(BaseHTTPRequestHandler):
         static = {'/': ('index.html', 'text/html; charset=utf-8'),
                   '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
                   '/signals.js': ('signals.js', 'text/javascript; charset=utf-8'),
+                  '/theme.js': ('theme.js', 'text/javascript; charset=utf-8'),
                   '/style.css': ('style.css', 'text/css; charset=utf-8')}
         if path in static:
             name, content_type = static[path]
@@ -226,7 +235,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.trusted_request() or self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
             return self.send(403, {'error': 'Use a same-origin JSON request.'})
-        if urlsplit(self.path).path != '/api/scans':
+        path = urlsplit(self.path).path
+        if path not in ('/api/scans', '/api/email'):
             return self.send(404, {'error': 'Not found.'})
         try:
             size = int(self.headers.get('Content-Length', '0'))
@@ -235,6 +245,19 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(size))
             if not isinstance(data, dict):
                 raise ValueError('Expected a JSON object.')
+            if path == '/api/email':
+                email = email_lookup.validate_email(data.get('email'))
+                key = secret_values().get('IPQS_KEY')
+                if not key:
+                    return self.send(409, {'error': 'Add IPQS_KEY to the server .secrets file to enable email lookups.'})
+                if not EMAIL_SLOTS.acquire(blocking=False):
+                    return self.send(429, {'error': 'Email lookups are busy. Try again shortly.'})
+                try:
+                    return self.send(200, {'report': email_lookup.lookup(email, key)})
+                except email_lookup.LookupError as error:
+                    return self.send(502, {'error': str(error)})
+                finally:
+                    EMAIL_SLOTS.release()
             addresses, skipped = parse_ips(data.get('ips'))
             if not configuration()['ready']:
                 return self.send(409, {'error': 'Finish server setup first. All four provider keys and runtime dependencies are required.'})

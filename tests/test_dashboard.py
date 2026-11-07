@@ -130,6 +130,26 @@ class HTTPTests(unittest.TestCase):
     def test_unknown_scan_returns_404(self):
         self.assertEqual(self.request('/api/scans/'+'a'*32)[0], 404)
 
+    def test_email_lookup_only_requires_ipqs_and_returns_no_key(self):
+        with patch.object(dashboard, 'secret_values', return_value={'IPQS_KEY': 'secret-key-sentinel'}), patch.object(dashboard.email_lookup, 'lookup', return_value={'Email Address': 'test@example.com', 'Valid': 'YES'}) as lookup:
+            status, body, _ = self.request('/api/email', {'email': 'test@example.com'})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)['report']['Valid'], 'YES')
+        self.assertNotIn(b'secret-key-sentinel', body)
+        lookup.assert_called_once_with('test@example.com', 'secret-key-sentinel')
+
+    def test_email_missing_key_invalid_input_and_cross_origin(self):
+        with patch.object(dashboard, 'secret_values', return_value={}):
+            self.assertEqual(self.request('/api/email', {'email': 'test@example.com'})[0], 409)
+        self.assertEqual(self.request('/api/email', {'email': 'invalid'})[0], 400)
+        self.assertEqual(self.request('/api/email', {'email': 'test@example.com'}, {'Origin': 'https://evil.example'})[0], 403)
+
+    def test_email_provider_failure_is_reported(self):
+        with patch.object(dashboard, 'secret_values', return_value={'IPQS_KEY': 'test'}), patch.object(dashboard.email_lookup, 'lookup', side_effect=dashboard.email_lookup.LookupError('IPQS denied email API access.')):
+            status, body, _ = self.request('/api/email', {'email': 'test@example.com'})
+        self.assertEqual(status, 502)
+        self.assertIn(b'denied email API access', body)
+
 
 if __name__ == '__main__':
     unittest.main()

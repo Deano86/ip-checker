@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>IP Checker · Network intelligence</title>
-  <link rel="stylesheet" href="/style.css"><script src="/signals.js" defer></script><script src="/app.js" defer></script>
+  <script src="/theme.js"></script><link rel="stylesheet" href="/style.css"><script src="/signals.js" defer></script><script src="/app.js" defer></script>
 </head>
 <body>
   <aside class="sidebar">
@@ -11,13 +11,14 @@
     <div class="nav-label">WORKSPACE</div>
     <nav aria-label="Main navigation">
       <button class="nav-item active" data-view="dashboard"><span>▦</span> Overview <span class="nav-dot"></span></button>
+      <button class="nav-item" data-view="email"><span>✉</span> Email lookup</button>
       <button class="nav-item" data-view="providers"><span>◈</span> Providers <small>5</small></button>
       <button class="nav-item" data-view="guide"><span>≡</span> Quick guide</button>
     </nav>
     <div class="sidebar-bottom"><span class="local-dot"></span> Your server. Your keys.<p>Credentials never reach the browser.</p><a href="https://github.com/Deano86/ip-checker" target="_blank" rel="noreferrer">View on GitHub ↗</a></div>
   </aside>
   <main>
-    <header class="topbar"><span>Workspace <span class="slash">/</span> <strong id="breadcrumb">Overview</strong></span><div class="topbar-right"><span class="server-pill"><i></i> Server connected</span><span class="avatar">D</span></div></header>
+    <header class="topbar"><span>Workspace <span class="slash">/</span> <strong id="breadcrumb">Overview</strong></span><div class="topbar-right"><button id="theme-toggle" class="button theme-toggle" type="button" aria-label="Switch to light mode">☀ Light mode</button><span class="server-pill"><i></i> Server connected</span><span class="avatar">D</span></div></header>
     <div class="page">
       <section id="dashboard-view">
         <div class="page-heading"><div><div class="eyebrow">NETWORK OVERVIEW</div><h1>IP intelligence</h1><p>A clearer picture of every address. Check anonymity, hosting and reputation.</p></div><button id="sample" class="button secondary">Explore sample results <span>↗</span></button></div>
@@ -54,6 +55,17 @@
           <div class="table-footer"><span id="shown">Showing 0 results</span><span><i class="legend-dot"></i> A signal for review, not a verdict</span></div>
         </section>
         <footer class="page-footer"><span>IP Checker <span class="footer-dot">·</span> Built for a closer look</span><span>IPinfo / IP2Location / proxycheck.io / Spamhaus / IPQS</span></footer>
+      </section>
+      <section id="email-view" hidden>
+        <div class="eyebrow">EMAIL INTELLIGENCE</div><h1>Email lookup</h1><p class="intro">Check email validity, deliverability and reputation with IPQS.</p>
+        <section class="panel email-entry"><div class="panel-heading"><div><h2>Check an email address</h2><p>One address per lookup. Uses your server’s existing IPQS key.</p></div><button id="email-sample" class="button secondary" type="button">Sample report ↗</button></div>
+          <form id="email-form"><label for="email-address">Email address</label><div class="email-input-row"><input id="email-address" type="email" maxlength="254" placeholder="name@example.com" autocomplete="off" required><button id="email-run" class="button primary" type="submit">Check email →</button></div><p class="email-disclosure">Submitted addresses are sent to IPQS for verification and use your account’s email lookup credits. Email results stay in this browser’s memory until refreshed.</p></form>
+          <p id="email-progress" class="email-progress" role="status" hidden>Checking with IPQS… this can take up to 20 seconds.</p><p id="email-error" class="error" role="alert" hidden></p>
+        </section>
+        <section id="email-report" class="panel email-report" hidden><div class="panel-heading"><div><h2 id="email-result-address">Email report</h2><p id="email-result-caption">IPQS email reputation</p></div><button id="email-export" class="button secondary" type="button">↓ Export CSV</button></div>
+          <div class="email-summary"><article class="risk-card"><h3>Email fraud risk</h3><div class="dial unknown" id="dial-email" role="group" aria-label="Email fraud risk"><span class="dial-marker"></span><div class="dial-inner"><strong id="dial-email-value">—</strong><small id="dial-email-caption">Unknown</small></div><span class="dial-min">0</span><span class="dial-max">100</span></div><p>IPQS score · 0–100 · higher means greater risk</p></article><div id="email-highlights" class="email-highlights"></div></div>
+          <p id="email-timeout-note" class="email-disclosure" hidden>Mailbox verification timed out. An unconfirmed negative validity result is shown as UNKNOWN. Try again later.</p><dl id="email-fields" class="email-fields"></dl><p class="risk-footnote">A valid mailbox or low fraud score does not guarantee delivery or trustworthiness. Missing and plan-restricted fields remain UNKNOWN.</p>
+        </section>
       </section>
       <section id="providers-view" hidden><div class="eyebrow">CONFIGURATION</div><h1>Intelligence providers</h1><p class="intro">Keep credentials in <code>.secrets</code> on your server. This dashboard only sees whether a key is configured.</p><div id="setup-cards" class="setup-cards"></div><div class="panel guide-panel"><h2>Connect your keys</h2><p>Copy <code>.secrets.example</code> to <code>.secrets</code> and fill in the four required values. Add IPQS_KEY to enable IPQualityScore. Use simple quoted Bash assignments. Refresh this page when you have saved the file.</p><pre>IPINFO_KEY='your-token'
 IP2_KEY='your-key'

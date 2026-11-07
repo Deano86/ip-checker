@@ -24,9 +24,9 @@ async function api(path, options) {
   return data;
 }
 function setView(view) {
-  ['dashboard','providers','guide'].forEach(name => $(name+'-view').hidden = name !== view);
+  ['dashboard','email','providers','guide'].forEach(name => $(name+'-view').hidden = name !== view);
   document.querySelectorAll('.nav-item').forEach(node => node.classList.toggle('active', node.dataset.view === view));
-  $('breadcrumb').textContent = {dashboard:'Overview',providers:'Providers',guide:'Quick guide'}[view];
+  $('breadcrumb').textContent = {dashboard:'Overview',email:'Email lookup',providers:'Providers',guide:'Quick guide'}[view];
 }
 document.querySelectorAll('[data-view]').forEach(node => node.addEventListener('click', () => setView(node.dataset.view)));
 
@@ -223,3 +223,51 @@ async function init() {
   }
 }
 init();
+
+function updateThemeButton() {
+  const dark=document.documentElement.dataset.theme==='dark';
+  $('theme-toggle').textContent=dark?'☀ Light mode':'☾ Dark mode';
+  $('theme-toggle').setAttribute('aria-label',dark?'Switch to light mode':'Switch to dark mode');
+}
+$('theme-toggle').addEventListener('click',()=> {
+  const theme=document.documentElement.dataset.theme==='dark'?'light':'dark';
+  document.documentElement.dataset.theme=theme;
+  try {localStorage.setItem('ip-checker-theme',theme);} catch {}
+  updateThemeButton();
+});
+updateThemeButton();
+let emailResult=null;
+function renderEmail(report,sample=false) {
+  emailResult=report;
+  $('email-report').hidden=false;
+  $('email-result-address').textContent=report['Email Address'];
+  $('email-result-caption').textContent=sample?'Illustrative sample · Not a live lookup':'IPQS email reputation · Fresh lookup';
+  setDial('email',report['Fraud Score']);
+  $('email-highlights').replaceChildren();
+  for(const key of ['Valid','Disposable','Deliverability','Recent Abuse']) {
+    const box=element('div','email-highlight'); box.append(element('span','',key),element('strong','',report[key] || 'UNKNOWN')); $('email-highlights').append(box);
+  }
+  $('email-timeout-note').hidden=report['Verification Timed Out']!=='YES';
+  $('email-fields').replaceChildren();
+  for(const [key,value] of Object.entries(report)) {const line=element('div','detail-row'); line.append(element('dt','',key),element('dd','',value == null || String(value).trim()===''?'UNKNOWN':value)); $('email-fields').append(line);}
+}
+$('email-form').addEventListener('submit',async event=> {
+  event.preventDefault();
+  $('email-error').hidden=true; $('email-report').hidden=true; emailResult=null;
+  $('email-run').disabled=true; $('email-sample').disabled=true; $('email-progress').hidden=false;
+  try {
+    const result=await api('/api/email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:$('email-address').value})});
+    renderEmail(result.report);
+  } catch(error) {$('email-error').textContent=error.message; $('email-error').hidden=false;}
+  finally {$('email-run').disabled=false; $('email-sample').disabled=false; $('email-progress').hidden=true;}
+});
+$('email-sample').addEventListener('click',()=> {
+  $('email-error').hidden=true;
+  renderEmail({'Email Address':'sample@example.com',Provider:'IPQS',Valid:'YES',Disposable:'NO','Fraud Score':'18','Recent Abuse':'NO','Verification Timed Out':'NO','DNS Valid':'YES','Catch All':'UNKNOWN',Honeypot:'NO',Suspect:'NO','Frequent Complainer':'NO',Leaked:'UNKNOWN',Deliverability:'high','Spam Trap Score':'none','Suggested Domain':'N/A'},true);
+});
+$('email-export').addEventListener('click',()=> {
+  if(!emailResult) return;
+  const quote=value=>{value=String(value); if(/^[=+@-]/.test(value.trimStart())) value="'"+value; return '"'+value.replaceAll('"','""')+'"';};
+  const csv=[Object.keys(emailResult),Object.values(emailResult)].map(row=>row.map(quote).join(',')).join('\r\n');
+  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); const link=element('a'); link.href=url; link.download='email-result.csv'; link.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+});

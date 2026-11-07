@@ -265,5 +265,27 @@ Crawler identification provides context and never suppresses other detections.
 After pulling and rebuilding, run a new scan to populate the new fields.
 Saved history and lookup caching are not included in this update.
 
+## Email lookup and dark mode
+
+Use **Email lookup** in the sidebar to check one email address with IPQS.
+It uses the same `IPQS_KEY` from `.secrets`, independently of the four
+required IP scan providers. Your IPQS account must have email API access
+and available email lookup credits. Submitted addresses are sent to IPQS
+using a server-side HTTPS POST; the API key is sent in a request header.
+No email is sent by the dashboard itself.
+
+The report includes validity, disposable status, fraud risk, deliverability,
+recent abuse, DNS/catch-all signals and other selected reputation fields.
+Absent or plan-restricted fields remain UNKNOWN. A timed-out mailbox check
+does not become a confirmed invalid address. The report can be exported to
+CSV; email input/results are not persisted to disk or browser storage.
+The optional Sample report button uses illustrative local data without an API call.
+
+Dark mode is the default. The top bar has a Light mode / Dark mode toggle;
+the browser remembers your selection. The theme is applied before the page
+styles load to minimise a white flash. Existing IP scan behaviour is preserved.
+
+Reference: [IPQS email verification](https://www.ipqualityscore.com/documentation/email-validation-api/overview).
+
 References: [IPinfo Lite response fields](https://ipinfo.io/developers/lite-api),
 [IP2Location response fields and error codes](https://www.ip2location.io/ip2location-documentation).
