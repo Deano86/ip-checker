@@ -1,0 +1,14 @@
+.secrets
+.secrets.*
+!.secrets.example
+.env
+.env.*
+ip-addresses.txt
+ip-results*.csv
+*.csv
+__pycache__/
+# Legacy token files from the original script
+tokenapi.txt
+ip2location-token.txt
+proxycheck-token.txt
+spamhaus-token.txt
