@@ -1,0 +1,16 @@
+services:
+  ip-checker:
+    build: .
+    restart: unless-stopped
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./.secrets:/app/.secrets:ro
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=32m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

@@ -1,0 +1,9 @@
+.git
+.secrets
+.secrets.*
+.env*
+*.csv
+ip-addresses.txt
+*token*.txt
+__pycache__
+tests

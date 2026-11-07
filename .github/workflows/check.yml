@@ -11,5 +11,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y jq dnsutils
       - name: Check Bash syntax
         run: bash -n ip-checker.sh
+      - name: Check dashboard JavaScript
+        run: node --check web/app.js
       - name: Run offline regression tests
         run: python3 -m unittest discover -s tests -v

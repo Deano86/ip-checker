@@ -7,6 +7,7 @@ ip-addresses.txt
 ip-results*.csv
 *.csv
 __pycache__/
+*.pyc
 # Legacy token files from the original script
 tokenapi.txt
 ip2location-token.txt

@@ -5,6 +5,10 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import time
+from unittest.mock import patch
+
+import dashboard
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -122,6 +126,20 @@ esac
                 result = self.run_checker(self.input, target)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(target.read_bytes(), before)
+
+    def test_dashboard_worker_runs_checker_and_reads_csv(self):
+        store = dashboard.ScanStore()
+        with patch.object(dashboard, 'ROOT', self.base), patch.dict(os.environ, self.env, clear=True):
+            scan_id = store.create(['1.1.1.1'], [])
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                scan = store.snapshot(scan_id)
+                if scan['status'] != 'running':
+                    break
+                time.sleep(0.1)
+        self.assertEqual(scan['status'], 'complete', scan)
+        self.assertEqual(scan['completed'], 1)
+        self.assertEqual(scan['rows'][0]['Review'], 'NO_POSITIVE_DETECTION')
 
 
 if __name__ == '__main__':
