@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent
 KEYS = {'IPinfo': 'IPINFO_KEY', 'IP2Location': 'IP2_KEY',
-        'proxycheck.io': 'PROXY_KEY', 'Spamhaus': 'SPAMHAUS_KEY'}
+        'proxycheck.io': 'PROXY_KEY', 'Spamhaus': 'SPAMHAUS_KEY', 'IPQS': 'IPQS_KEY'}
 
 
 def configuration():
@@ -38,10 +38,10 @@ def configuration():
                     pass
     except (OSError, UnicodeError):
         pass
-    providers = [{'name': name, 'configured': bool(values.get(key))} for name, key in KEYS.items()]
+    providers = [{'name': name, 'configured': bool(values.get(key)), 'required': name != 'IPQS'} for name, key in KEYS.items()]
     missing = [cmd for cmd in ('bash', 'curl', 'jq', 'dig', 'python3') if not shutil.which(cmd)]
     return {'providers': providers, 'missing_dependencies': missing,
-            'ready': all(p['configured'] for p in providers) and not missing}
+            'ready': all(p['configured'] for p in providers if p['required']) and not missing}
 
 
 def parse_ips(text):
@@ -115,7 +115,7 @@ class ScanStore:
                 env['IP_CHECKER_SECRETS'] = str(Path(env.get('IP_CHECKER_SECRETS', str(ROOT / '.secrets'))).resolve())
                 process = subprocess.Popen(['bash', str(ROOT / 'ip-checker.sh'), str(input_file), str(output_file)],
                                            cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                deadline = time.monotonic() + max(180, len(addresses) * 180)
+                deadline = time.monotonic() + max(210, len(addresses) * 210)
                 while True:
                     done = process.poll() is not None
                     if output_file.exists():
@@ -123,7 +123,7 @@ class ScanStore:
                         contents = output_file.read_text(encoding='utf-8')
                         contents = contents[:contents.rfind('\n') + 1]
                         rows = list(csv.DictReader(io.StringIO(contents)))
-                        rows = [row for row in rows if len(row) == 19 and None not in row and all(v is not None for v in row.values())]
+                        rows = [row for row in rows if len(row) == 26 and None not in row and all(v is not None for v in row.values())]
                         with self.lock:
                             self.scans[scan_id]['rows'] = rows
                             self.scans[scan_id]['completed'] = len(rows)

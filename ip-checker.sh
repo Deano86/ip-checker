@@ -26,6 +26,10 @@ source "$SECRETS_FILE" || { echo "Could not load secrets file." >&2; exit 1; }
 for name in IPINFO_KEY IP2_KEY PROXY_KEY SPAMHAUS_KEY; do
     [[ -n "${!name:-}" ]] || { echo "Missing key in .secrets: $name" >&2; exit 1; }
 done
+# IPQS is optional so existing four-provider installations keep working.
+IPQS_KEY=${IPQS_KEY:-}
+IPQS_ENABLED=0
+[[ -z "$IPQS_KEY" ]] || IPQS_ENABLED=1
 # Protect the input and configuration from accidental output overwrites.
 python3 - "$INPUT" "$OUTPUT" "$SECRETS_FILE" <<'PY'
 from pathlib import Path
@@ -159,7 +163,7 @@ spamhaus_lookup() {
     printf '%s|YES\n' "$joined"
 }
 
-jq -rn '["IP Address","CIDR","ASN","Provider","IP2 Proxy","PC Anonymous","PC VPN","PC Proxy","PC Tor","PC Hosting","PC Network Type","PC Risk","PC Confidence","Spamhaus Lists","Spamhaus Status","Anonymisation","Hosting","Threat Listing","Review"] | @csv' > "$OUTPUT" || { echo "Cannot write output: $OUTPUT" >&2; exit 1; }
+jq -rn '["IP Address","CIDR","ASN","Provider","IP2 Proxy","PC Anonymous","PC VPN","PC Proxy","PC Tor","PC Hosting","PC Network Type","PC Risk","PC Confidence","Spamhaus Lists","Spamhaus Status","Anonymisation","Hosting","Threat Listing","Review","IPQS Status","IPQS Fraud Score","IPQS Proxy","IPQS VPN","IPQS Tor","IPQS Recent Abuse","IPQS Bot"] | @csv' > "$OUTPUT" || { echo "Cannot write output: $OUTPUT" >&2; exit 1; }
 
 printf '\nLoaded %d unique public IPv4 addresses.\n\n' "${#IPS[@]}"
 printf '%-18s %-21s %-10s %-20s %-6s %-6s %-6s %-8s %-14s %s\n' IP CIDR ASN PROVIDER IP2 VPN TOR HOSTING SPAMHAUS REVIEW
@@ -199,6 +203,24 @@ for IP in "${IPS[@]}"; do
     PC_RISK=$(jq -r '.detections.risk // .risk // "UNKNOWN"' <<< "$PC_ENTRY")
     PC_CONFIDENCE=$(jq -r '.detections.confidence // "UNKNOWN"' <<< "$PC_ENTRY")
 
+    IPQS_STATUS=NOT_CONFIGURED
+    IPQS='{}'
+    if ((IPQS_ENABLED)); then
+        IPQS=$(api_get -H "ipqs-key: $IPQS_KEY" -G --data-urlencode "ip=$IP" 'https://www.ipqualityscore.com/api/json/ip')
+        if jq -e '.success == true' >/dev/null 2>&1 <<< "$IPQS"; then
+            IPQS_STATUS=OK
+        else
+            IPQS_STATUS=ERROR
+            IPQS='{}'
+        fi
+    fi
+    IPQS_PROXY=$(json_flag "$IPQS" proxy)
+    IPQS_VPN=$(json_flag "$IPQS" vpn)
+    IPQS_TOR=$(json_flag "$IPQS" tor)
+    IPQS_ABUSE=$(json_flag "$IPQS" recent_abuse)
+    IPQS_BOT=$(json_flag "$IPQS" bot_status)
+    IPQS_SCORE=$(jq -r 'if (.fraud_score | type) == "number" then if .fraud_score >= 0 and .fraud_score <= 100 then .fraud_score else "UNKNOWN" end else "UNKNOWN" end' <<< "$IPQS")
+
     SH=$(spamhaus_lookup "$IP")
     SH_LISTS=${SH%%|*}
     SH_STATUS=${SH##*|}
@@ -211,24 +233,26 @@ for IP in "${IPS[@]}"; do
     fi
 
     ANON=NO
-    if [[ "$PC_VPN" == YES || "$PC_PROXY" == YES || "$PC_TOR" == YES || "$PC_ANON" == YES || "$IP2_PROXY" == YES ]]; then
+    if [[ "$PC_VPN" == YES || "$PC_PROXY" == YES || "$PC_TOR" == YES || "$PC_ANON" == YES || "$IP2_PROXY" == YES || "$IPQS_PROXY" == YES || "$IPQS_VPN" == YES || "$IPQS_TOR" == YES ]]; then
         ANON=YES
-    elif [[ "$PC_VPN" == UNKNOWN || "$PC_PROXY" == UNKNOWN || "$PC_TOR" == UNKNOWN || "$PC_ANON" == UNKNOWN || "$IP2_PROXY" == UNKNOWN ]]; then
+    elif [[ "$PC_VPN" == UNKNOWN || "$PC_PROXY" == UNKNOWN || "$PC_TOR" == UNKNOWN || "$PC_ANON" == UNKNOWN || "$IP2_PROXY" == UNKNOWN ]] || { ((IPQS_ENABLED)) && [[ "$IPQS_PROXY" == UNKNOWN || "$IPQS_VPN" == UNKNOWN || "$IPQS_TOR" == UNKNOWN ]]; }; then
         ANON=UNKNOWN
     fi
-    [[ "$PC_VPN" != YES ]] || ((VPN_COUNT+=1))
-    if [[ "$ANON" == YES && "$PC_VPN" != YES ]]; then ((PROXY_COUNT+=1)); fi
+    if [[ "$PC_VPN" == YES || "$IPQS_VPN" == YES ]]; then ((VPN_COUNT+=1)); fi
+    if [[ "$ANON" == YES && "$PC_VPN" != YES && "$IPQS_VPN" != YES ]]; then ((PROXY_COUNT+=1)); fi
     [[ "$PC_HOSTING" != YES ]] || ((HOST_COUNT+=1))
 
     FLAGS=()
-    [[ "$PC_VPN" != YES ]] || FLAGS+=(VPN)
-    [[ "$PC_TOR" != YES ]] || FLAGS+=(TOR)
-    if [[ "$IP2_PROXY" == YES || "$PC_PROXY" == YES || "$PC_ANON" == YES ]]; then FLAGS+=(PROXY); fi
+    if [[ "$PC_VPN" == YES || "$IPQS_VPN" == YES ]]; then FLAGS+=(VPN); fi
+    if [[ "$PC_TOR" == YES || "$IPQS_TOR" == YES ]]; then FLAGS+=(TOR); fi
+    if [[ "$IP2_PROXY" == YES || "$PC_PROXY" == YES || "$PC_ANON" == YES || "$IPQS_PROXY" == YES ]]; then FLAGS+=(PROXY); fi
+    [[ "$IPQS_ABUSE" != YES ]] || FLAGS+=(IPQS_RECENT_ABUSE)
+    [[ "$IPQS_BOT" != YES ]] || FLAGS+=(IPQS_BOT)
     [[ "$PC_HOSTING" != YES ]] || FLAGS+=(HOSTING)
     [[ "$THREAT" != YES ]] || FLAGS+=(SPAMHAUS_THREAT)
     if ((${#FLAGS[@]})); then
         REVIEW=$(IFS=+; echo "${FLAGS[*]}")
-    elif [[ "$ANON" == UNKNOWN || "$PC_HOSTING" == UNKNOWN || "$THREAT" == UNKNOWN ]]; then
+    elif [[ "$ANON" == UNKNOWN || "$PC_HOSTING" == UNKNOWN || "$THREAT" == UNKNOWN ]] || { ((IPQS_ENABLED)) && [[ "$IPQS_SCORE" == UNKNOWN || "$IPQS_ABUSE" == UNKNOWN || "$IPQS_BOT" == UNKNOWN ]]; }; then
         REVIEW=INCOMPLETE
         ((UNKNOWN_COUNT+=1))
     else
@@ -243,11 +267,13 @@ for IP in "${IPS[@]}"; do
         --arg tor "$PC_TOR" --arg hosting "$PC_HOSTING" --arg network "$PC_NETWORK" \
         --arg risk "$PC_RISK" --arg confidence "$PC_CONFIDENCE" --arg sh "$SH_LISTS" \
         --arg shstatus "$SH_STATUS" --arg anonymisation "$ANON" --arg threat "$THREAT" \
-        --arg review "$REVIEW" \
-        '[$ip,$cidr,$asn,$provider,$ip2,$anon,$vpn,$proxy,$tor,$hosting,$network,$risk,$confidence,$sh,$shstatus,$anonymisation,$hosting,$threat,$review] | @csv' >> "$OUTPUT" || { echo "Cannot append output: $OUTPUT" >&2; exit 1; }
+        --arg review "$REVIEW" --arg qsstatus "$IPQS_STATUS" --arg qsscore "$IPQS_SCORE" \
+        --arg qsproxy "$IPQS_PROXY" --arg qsvpn "$IPQS_VPN" --arg qstor "$IPQS_TOR" \
+        --arg qsabuse "$IPQS_ABUSE" --arg qsbot "$IPQS_BOT" \
+        '[$ip,$cidr,$asn,$provider,$ip2,$anon,$vpn,$proxy,$tor,$hosting,$network,$risk,$confidence,$sh,$shstatus,$anonymisation,$hosting,$threat,$review,$qsstatus,$qsscore,$qsproxy,$qsvpn,$qstor,$qsabuse,$qsbot] | @csv' >> "$OUTPUT" || { echo "Cannot append output: $OUTPUT" >&2; exit 1; }
     sleep 0.2
 done
 printf '\nTotal: %d | VPN: %d | Other proxy/anonymous: %d | Hosting: %d | Spamhaus threat: %d | Incomplete: %d\n' \
     "${#IPS[@]}" "$VPN_COUNT" "$PROXY_COUNT" "$HOST_COUNT" "$THREAT_COUNT" "$UNKNOWN_COUNT"
 printf 'CSV: %s\n' "$OUTPUT"
-unset IPINFO_KEY IP2_KEY PROXY_KEY SPAMHAUS_KEY
+unset IPINFO_KEY IP2_KEY PROXY_KEY SPAMHAUS_KEY IPQS_KEY

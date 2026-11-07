@@ -34,6 +34,14 @@ case "$*" in
   *rdap*) echo '{"cidr0_cidrs":[{"v4prefix":"1.1.1.0","length":24}]}' ;;
   *ipinfo*) echo '{"org":"AS13335 Example Provider"}' ;;
   *ip2location*) echo '{"is_proxy":false}' ;;
+  *ipqualityscore*)
+    case ${MOCK_IPQS:-negative} in
+      error) echo '{"success":false,"message":"Invalid key"}' ;;
+      malformed) echo 'not json' ;;
+      missing) echo '{"success":true}' ;;
+      positive) echo '{"success":true,"fraud_score":95,"proxy":true,"vpn":true,"tor":true,"recent_abuse":true,"bot_status":true}' ;;
+      *) echo '{"success":true,"fraud_score":0,"proxy":false,"vpn":false,"tor":false,"recent_abuse":false,"bot_status":false}' ;;
+    esac ;;
   *proxycheck*)
     if [[ ${MOCK_PC:-ok} == error ]]; then echo '{"status":"error"}'; else
       echo '{"status":"ok","1.1.1.1":{"detections":{"anonymous":false,"vpn":false,"proxy":false,"tor":false,"risk":0,"confidence":0},"network":{"type":"residential"}}}'
@@ -51,7 +59,7 @@ case ${MOCK_DNS:-negative} in
 esac
 ''')
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH'])
-        for key in ('IP_CHECKER_SECRETS', 'MOCK_PC', 'MOCK_DNS'):
+        for key in ('IP_CHECKER_SECRETS', 'MOCK_PC', 'MOCK_DNS', 'MOCK_IPQS', 'IPQS_KEY'):
             self.env.pop(key, None)
 
     def stub(self, name, content):
@@ -70,7 +78,7 @@ esac
         with (self.base / 'ip-results.csv').open(newline='') as handle:
             rows = list(csv.DictReader(handle))
         self.assertEqual(len(rows), 1)
-        self.assertEqual(len(rows[0]), 19)
+        self.assertEqual(len(rows[0]), 26)
         self.assertIn('Skipping invalid/non-public IP', result.stderr)
         return rows[0]
 
@@ -81,6 +89,44 @@ esac
         self.assertEqual(row['Anonymisation'], 'NO')
         self.assertEqual(row['Review'], 'NO_POSITIVE_DETECTION')
         self.assertEqual(row['CIDR'], '1.1.1.0/24')
+        self.assertEqual(row['IPQS Status'], 'NOT_CONFIGURED')
+
+    def enable_ipqs(self):
+        with (self.base / '.secrets').open('a') as handle:
+            handle.write("IPQS_KEY='test-ipqs'\n")
+
+    def test_ipqs_zero_and_false_are_preserved(self):
+        self.enable_ipqs()
+        row = self.row()
+        self.assertEqual(row['IPQS Status'], 'OK')
+        self.assertEqual(row['IPQS Fraud Score'], '0')
+        self.assertEqual(row['IPQS Proxy'], 'NO')
+        self.assertEqual(row['Review'], 'NO_POSITIVE_DETECTION')
+
+    def test_ipqs_detections_contribute_to_review(self):
+        self.enable_ipqs()
+        row = self.row(MOCK_IPQS='positive')
+        self.assertEqual(row['Anonymisation'], 'YES')
+        self.assertEqual(row['IPQS Fraud Score'], '95')
+        for flag in ('VPN', 'TOR', 'PROXY', 'IPQS_RECENT_ABUSE', 'IPQS_BOT'):
+            self.assertIn(flag, row['Review'])
+        self.assertEqual(row['Threat Listing'], 'NO')
+
+    def test_ipqs_errors_never_become_negative(self):
+        self.enable_ipqs()
+        for state in ('error', 'malformed'):
+            with self.subTest(state=state):
+                row = self.row(MOCK_IPQS=state)
+                self.assertEqual(row['IPQS Status'], 'ERROR')
+                self.assertEqual(row['IPQS Fraud Score'], 'UNKNOWN')
+                self.assertEqual(row['Anonymisation'], 'UNKNOWN')
+                self.assertEqual(row['Review'], 'INCOMPLETE')
+
+    def test_ipqs_missing_fields_remain_unknown(self):
+        self.enable_ipqs()
+        row = self.row(MOCK_IPQS='missing')
+        self.assertEqual(row['IPQS Proxy'], 'UNKNOWN')
+        self.assertEqual(row['Review'], 'INCOMPLETE')
 
     def test_partial_provider_failure_is_incomplete(self):
         row = self.row(MOCK_PC='error')

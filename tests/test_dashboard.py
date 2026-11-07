@@ -46,6 +46,22 @@ class InputTests(unittest.TestCase):
             self.assertTrue(dashboard.safe_cell(value).startswith("'"))
         self.assertEqual(dashboard.safe_cell('AS123 Provider'), 'AS123 Provider')
 
+    def test_ipqs_is_optional_and_key_is_not_exposed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / '.secrets'
+            config.write_text("IPINFO_KEY='test'\nIP2_KEY='test'\nPROXY_KEY='test'\nSPAMHAUS_KEY='test'\n")
+            with patch.dict(os.environ, IP_CHECKER_SECRETS=str(config)), patch.object(dashboard.shutil, 'which', return_value='/bin/mock'):
+                result = dashboard.configuration()
+                self.assertTrue(result['ready'])
+                ipqs = next(p for p in result['providers'] if p['name'] == 'IPQS')
+                self.assertFalse(ipqs['required'])
+                self.assertFalse(ipqs['configured'])
+                with config.open('a') as handle:
+                    handle.write("IPQS_KEY='private-ipqs-sentinel'\n")
+                result = dashboard.configuration()
+                self.assertTrue(next(p for p in result['providers'] if p['name'] == 'IPQS')['configured'])
+                self.assertNotIn('private-ipqs-sentinel', json.dumps(result))
+
 
 class HTTPTests(unittest.TestCase):
     def setUp(self):

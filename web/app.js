@@ -5,7 +5,8 @@ const providers = [
   {name:'IPinfo',logo:'ip',description:'ASN & network ownership'},
   {name:'IP2Location',logo:'i2',description:'Proxy intelligence'},
   {name:'proxycheck.io',logo:'pc',description:'VPN, Tor & hosting'},
-  {name:'Spamhaus',logo:'sh',description:'Threat & reputation lists'}
+  {name:'Spamhaus',logo:'sh',description:'Threat & reputation lists'},
+  {name:'IPQS',logo:'iq',description:'Fraud score & abuse · optional'}
 ];
 
 function element(tag, className, text) {
@@ -43,7 +44,7 @@ async function loadConfig() {
       $('setup-cards').append(card);
     });
     const count = config.providers.filter(provider => provider.configured).length;
-    $('provider-summary').textContent = count+' of 4 keys configured';
+    $('provider-summary').textContent = count+' of '+providers.length+' keys configured';
     $('dependency-note').textContent = config.missing_dependencies.length ? 'Missing server dependencies: '+config.missing_dependencies.join(', ')+'. Use the Docker setup or install them before scanning.' : 'All checker dependencies are available on the server.';
     if (config.active_scan && !polling) { scanId = config.active_scan; sample = false; await poll(); }
     return config;
@@ -114,6 +115,10 @@ function render() {
     tr.append(element('td','ip-cell',row['IP Address']));
     const network = element('td','network-cell',row.Provider); network.append(element('small','',row.ASN+' · '+row.CIDR)); tr.append(network);
     for (const field of ['Anonymisation','Hosting','Threat Listing']) { const td=element('td'); td.append(badge(row[field],field==='Threat Listing')); tr.append(td); }
+    const score = row['IPQS Fraud Score'];
+    const scoreCell = element('td');
+    scoreCell.append(element('span','badge '+(score && score!=='UNKNOWN'?'':'unknown'),score && score!=='UNKNOWN'?score+' / 100':row['IPQS Status']==='NOT_CONFIGURED'?'Not enabled':'Unknown'));
+    tr.append(scoreCell);
     const review = element('td');
     const label = row.Review==='NO_POSITIVE_DETECTION'?'No positives':row.Review==='INCOMPLETE'?'Incomplete':row.Review.replaceAll('_',' ').replaceAll('+',' · ');
     review.append(element('span','review-badge '+(row.Review==='NO_POSITIVE_DETECTION'?'negative':row.Review==='INCOMPLETE'?'incomplete':''),label)); tr.append(review);
@@ -143,7 +148,7 @@ $('export').addEventListener('click',()=> {
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); const link=element('a'); link.href=url; link.download='sample-ip-results.csv'; link.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
 });
 function sampleRow(ip,provider,asn,cidr,flags={}) {
-  return {'IP Address':ip,CIDR:cidr,ASN:asn,Provider:provider,'IP2 Proxy':'NO','PC Anonymous':'NO','PC VPN':'NO','PC Proxy':'NO','PC Tor':'NO','PC Hosting':'NO','PC Network Type':'Residential','PC Risk':'0','PC Confidence':'95','Spamhaus Lists':'NONE','Spamhaus Status':'NO',Anonymisation:'NO',Hosting:'NO','Threat Listing':'NO',Review:'NO_POSITIVE_DETECTION',...flags};
+  return {'IP Address':ip,CIDR:cidr,ASN:asn,Provider:provider,'IP2 Proxy':'NO','PC Anonymous':'NO','PC VPN':'NO','PC Proxy':'NO','PC Tor':'NO','PC Hosting':'NO','PC Network Type':'Residential','PC Risk':'0','PC Confidence':'95','Spamhaus Lists':'NONE','Spamhaus Status':'NO',Anonymisation:'NO',Hosting:'NO','Threat Listing':'NO',Review:'NO_POSITIVE_DETECTION','IPQS Status':'OK','IPQS Fraud Score':'0','IPQS Proxy':'NO','IPQS VPN':'NO','IPQS Tor':'NO','IPQS Recent Abuse':'NO','IPQS Bot':'NO',...flags};
 }
 $('sample').addEventListener('click',()=> {
   sample=true; scanId=null; $('sample-banner').hidden=false; $('scan-progress').hidden=true; showError('');

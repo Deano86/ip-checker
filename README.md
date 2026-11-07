@@ -1,8 +1,8 @@
 # IP Checker dashboard
 
 Check public IPv4 addresses against IPinfo, IP2Location, proxycheck.io and
-Spamhaus DQS, with registered allocation CIDRs from RDAP. Prints a terminal
-summary and writes a 19-column CSV with provider detections and review flags.
+Spamhaus DQS, and optionally IPQualityScore (IPQS), with registered allocation CIDRs from RDAP. Prints a terminal
+summary and writes a 26-column CSV with provider detections and review flags.
 The browser dashboard adds live progress, summary cards, text-file import,
 search, filters, sortable results, per-address detail views and CSV export.
 
@@ -52,7 +52,7 @@ lookup engine behind the dashboard.
 
 - Paste or import up to 500 public IPv4 addresses, one per line.
 - Run one scan at a time and watch completed results arrive.
-- Search, sort, filter and open an address for all 19 report fields.
+- Search, sort, filter and open an address for all 26 report fields.
 - Export all completed rows, even while a scan is running.
 - Check key presence and missing dependencies in the Providers screen.
 - Explore clearly labelled sample results without credentials.
@@ -112,6 +112,7 @@ IPINFO_KEY='your-ipinfo-token'
 IP2_KEY='your-ip2location-key'
 PROXY_KEY='your-proxycheck-key'
 SPAMHAUS_KEY='your-spamhaus-dqs-key'
+IPQS_KEY='your-ipqualityscore-key' # optional
 ```
 
 `.secrets` is ignored by Git. Only the empty `.secrets.example` template is
@@ -171,3 +172,35 @@ bash -n ip-checker.sh
 node --check web/app.js
 python3 -m unittest discover -s tests -v
 ```
+
+## IPQualityScore (IPQS)
+
+Add `IPQS_KEY='your-key'` to your existing `.secrets` file to enable IPQS.
+Keep the four original provider keys. An empty or missing IPQS key disables
+only IPQS and does not prevent scans. Rebuild after pulling this update:
+
+```bash
+git pull
+nano .secrets
+LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" docker compose up -d --build
+```
+
+The dashboard shows IPQS configuration status and a fraud score column.
+Per-address details and CSV contain lookup status, fraud score (0–100),
+proxy, VPN, Tor, recent abuse and bot flags. The first 19 CSV columns stay
+in the same order; seven IPQS columns are appended. Older saved CSVs are
+unchanged. New scans are needed to populate IPQS results.
+
+IPQS positives contribute to anonymisation and VPN/Tor/proxy review flags.
+Recent abuse and bot detections add `IPQS_RECENT_ABUSE` and `IPQS_BOT` review
+flags; the Spamhaus threat column stays specific to Spamhaus. The fraud
+score is shown as returned and does not impose an automatic blocking rule.
+Invalid keys, provider failures, quota errors and missing fields stay unknown;
+an otherwise unflagged scan row is incomplete when enabled IPQS data is missing.
+`NOT_CONFIGURED` means IPQS was skipped; `OK` means a successful API response;
+`ERROR` means it did not return a successful response.
+
+Authentication uses the server-side `ipqs-key` request header, following
+[IPQS authentication documentation](https://www.ipqualityscore.com/documentation/about-ipqs-apis/submitting-data-to-ipqs-apis).
+Field meanings follow the [IPQS response reference](https://www.ipqualityscore.com/documentation/proxy-detection-api/response-parameters).
+Live lookups consume your IPQS account's quota.
