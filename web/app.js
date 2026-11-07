@@ -1,6 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
-let rows = [], scanId = null, polling = false, sample = false, sortKey = 'IP Address', sortDirection = 1;
+let rows = [], scanId = null, polling = false, sortKey = 'IP Address', sortDirection = 1;
 let riskIP = '';
 const providers = [
   {name:'IPinfo',logo:'ip',description:'ASN & network ownership'},
@@ -47,7 +47,7 @@ async function loadConfig() {
     const count = config.providers.filter(provider => provider.configured).length;
     $('provider-summary').textContent = count+' of '+providers.length+' keys configured';
     $('dependency-note').textContent = config.missing_dependencies.length ? 'Missing server dependencies: '+config.missing_dependencies.join(', ')+'. Use the Docker setup or install them before scanning.' : 'All checker dependencies are available on the server.';
-    if (config.active_scan && !polling) { scanId = config.active_scan; sample = false; await poll(); }
+    if (config.active_scan && !polling) { scanId = config.active_scan; await poll(); }
     return config;
   } catch (error) {
     $('provider-summary').textContent = 'Server unavailable';
@@ -74,13 +74,13 @@ $('scan-form').addEventListener('submit',async event => {
   showError(''); $('run').disabled = true;
   try {
     const result = await api('/api/scans',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ips:$('ips').value})});
-    sample = false; $('sample-banner').hidden = true; scanId = result.id;
+    scanId = result.id;
     localStorage.setItem('ip-checker-last-scan',scanId); rows = []; render(); await poll();
   } catch (error) { showError(error.message); $('run').disabled = false; }
 });
 async function poll() {
   if (polling || !scanId) return;
-  polling = true; $('run').disabled = true; $('sample').disabled = true; $('scan-progress').hidden = false;
+  polling = true; $('run').disabled = true; $('scan-progress').hidden = false;
   try {
     while (true) {
       const scan = await api('/api/scans/'+scanId);
@@ -94,7 +94,7 @@ async function poll() {
     }
   } catch (error) {
     showError(error.message+' Refresh to reconnect to an active scan.');
-  } finally { polling = false; $('run').disabled = false; $('sample').disabled = false; }
+  } finally { polling = false; $('run').disabled = false; }
 }
 function badge(value, threat=false) {
   const label = {YES:'Yes',NO:'No',UNKNOWN:'Unknown'}[value] || value;
@@ -104,7 +104,7 @@ function render() {
   renderGauges();
   const counts = {total:rows.length,anon:rows.filter(row=>row.Anonymisation==='YES').length,host:rows.filter(row=>row.Hosting==='YES').length,threat:rows.filter(row=>row['Threat Listing']==='YES').length};
   for (const [key,value] of Object.entries(counts)) { $('count-'+key).textContent=value; $('bar-'+key).style.width=(rows.length?value/rows.length*100:0)+'%'; }
-  $('total-caption').textContent = rows.length ? (sample?'Illustrative sample scan':'In this scan') : 'Ready for your first scan';
+  $('total-caption').textContent = rows.length ? 'In this scan' : 'Ready for your first scan';
   $('row-count').textContent = rows.length;
   $('export').disabled = !rows.length;
   const query = $('search').value.toLowerCase(), filter = $('filter').value;
@@ -193,29 +193,8 @@ $('details').addEventListener('click',event=> {
 $('search').addEventListener('input',render); $('filter').addEventListener('change',render);
 document.querySelectorAll('[data-sort]').forEach(button=>button.addEventListener('click',()=> { sortDirection=sortKey===button.dataset.sort?-sortDirection:1; sortKey=button.dataset.sort; render(); }));
 $('export').addEventListener('click',()=> {
-  if (!rows.length) return;
-  if (!sample && scanId) { window.location.href='/api/scans/'+scanId+'/csv'; return; }
-  const quote = value => '"'+String(value).replaceAll('"','""')+'"';
-  const csv = [Object.keys(rows[0]),...rows.map(Object.values)].map(row=>row.map(quote).join(',')).join('\r\n');
-  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); const link=element('a'); link.href=url; link.download='sample-ip-results.csv'; link.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+  if (rows.length && scanId) window.location.href='/api/scans/'+scanId+'/csv';
 });
-function sampleRow(ip,provider,asn,cidr,flags={}) {
-  return {'IP Address':ip,CIDR:cidr,ASN:asn,Provider:provider,'IP2 Proxy':'NO','PC Anonymous':'NO','PC VPN':'NO','PC Proxy':'NO','PC Tor':'NO','PC Hosting':'NO','PC Network Type':'Residential','PC Risk':'0','PC Confidence':'95','Spamhaus Lists':'NONE','Spamhaus Status':'NO',Anonymisation:'NO',Hosting:'NO','Threat Listing':'NO',Review:'NO_POSITIVE_DETECTION','IPQS Status':'OK','IPQS Fraud Score':'0','IPQS Proxy':'NO','IPQS VPN':'NO','IPQS Tor':'NO','IPQS Recent Abuse':'NO','IPQS Bot':'NO',...flags};
-}
-$('sample').addEventListener('click',()=> {
-  sample=true; scanId=null; $('sample-banner').hidden=false; $('scan-progress').hidden=true; showError('');
-  rows=[
-    sampleRow('203.0.113.10','Example cloud network','AS64500','203.0.113.0/24',{Hosting:'YES','PC Hosting':'YES','PC Network Type':'Hosting',Review:'HOSTING'}),
-    sampleRow('203.0.113.20','Example datacenter','AS64501','203.0.113.0/24',{Hosting:'YES','PC Hosting':'YES','PC Network Type':'Hosting',Review:'HOSTING'}),
-    sampleRow('203.0.113.30','Example VPN network','AS64502','203.0.113.0/24',{'PC VPN':'YES','PC Anonymous':'YES','IP2 Proxy':'YES',Anonymisation:'YES','PC Risk':'85',Review:'VPN+PROXY'}),
-    sampleRow('203.0.113.40','Example residential network','AS64503','203.0.113.0/24'),
-    sampleRow('203.0.113.50','Example listed network','AS64504','203.0.113.0/24',{'Spamhaus Lists':'SBL','Spamhaus Status':'YES','Threat Listing':'YES',Review:'SPAMHAUS_THREAT'}),
-    sampleRow('203.0.113.60','Example unavailable source','AS64505','203.0.113.0/24',{'PC Anonymous':'UNKNOWN','PC VPN':'UNKNOWN',Anonymisation:'UNKNOWN',Review:'INCOMPLETE'})
-  ];
-  rows=rows.map((row,index)=>({...row,'IPQS Active VPN':index===2?'YES':'NO','IPQS Active Tor':'NO','IPQS Connection Type':index<2?'Data Center':'Residential','IPQS Abuse Frequency':'none','IPQS Verified Crawler':'NO','IPQS Hostname':'example.test','IPQS Country':'GB',...(index===2?{'PC VPN':'NO','PC Anonymous':'NO','PC Risk':'33','IPQS Fraud Score':'75','IPQS VPN':'YES','IPQS Proxy':'YES'}:{})}));
-  $('results-caption').textContent='Illustrative sample · Not live provider data'; render();
-});
-$('clear-sample').addEventListener('click',()=> { sample=false; rows=[]; $('sample-banner').hidden=true; $('results-caption').textContent='Your next investigation starts here.'; render(); });
 async function init() {
   render(); const config=await loadConfig();
   if (config && !config.active_scan) {
@@ -241,11 +220,11 @@ $('theme-toggle').addEventListener('click',()=> {
 });
 updateThemeButton();
 let emailResult=null;
-function renderEmail(report,sample=false) {
+function renderEmail(report) {
   emailResult=report;
   $('email-report').hidden=false;
   $('email-result-address').textContent=report['Email Address'];
-  $('email-result-caption').textContent=sample?'Illustrative sample · Not a live lookup':'IPQS email reputation · Fresh lookup';
+  $('email-result-caption').textContent='IPQS email reputation · Fresh lookup';
   setDial('email',report['Fraud Score']);
   $('email-highlights').replaceChildren();
   for(const key of ['Valid','Disposable','Deliverability','Recent Abuse']) {
@@ -258,16 +237,12 @@ function renderEmail(report,sample=false) {
 $('email-form').addEventListener('submit',async event=> {
   event.preventDefault();
   $('email-error').hidden=true; $('email-report').hidden=true; emailResult=null;
-  $('email-run').disabled=true; $('email-sample').disabled=true; $('email-progress').hidden=false;
+  $('email-run').disabled=true; $('email-progress').hidden=false;
   try {
     const result=await api('/api/email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:$('email-address').value})});
     renderEmail(result.report);
   } catch(error) {$('email-error').textContent=error.message; $('email-error').hidden=false;}
-  finally {$('email-run').disabled=false; $('email-sample').disabled=false; $('email-progress').hidden=true;}
-});
-$('email-sample').addEventListener('click',()=> {
-  $('email-error').hidden=true;
-  renderEmail({'Email Address':'sample@example.com',Provider:'IPQS',Valid:'YES',Disposable:'NO','Fraud Score':'18','Recent Abuse':'NO','Verification Timed Out':'NO','DNS Valid':'YES','Catch All':'UNKNOWN',Honeypot:'NO',Suspect:'NO','Frequent Complainer':'NO',Leaked:'UNKNOWN',Deliverability:'high','Spam Trap Score':'none','Suggested Domain':'N/A'},true);
+  finally {$('email-run').disabled=false; $('email-progress').hidden=true;}
 });
 $('email-export').addEventListener('click',()=> {
   if(!emailResult) return;

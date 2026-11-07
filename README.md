@@ -55,7 +55,6 @@ lookup engine behind the dashboard.
 - Search, sort, filter and open an address for all 40 report fields.
 - Export all completed rows, even while a scan is running.
 - Check key presence and missing dependencies in the Providers screen.
-- Explore clearly labelled sample results without credentials.
 
 History stays in server memory for the latest 20 scans and clears on
 restart. Export reports you want to keep. Refreshing the page reconnects
@@ -279,7 +278,6 @@ recent abuse, DNS/catch-all signals and other selected reputation fields.
 Absent or plan-restricted fields remain UNKNOWN. A timed-out mailbox check
 does not become a confirmed invalid address. The report can be exported to
 CSV; email input/results are not persisted to disk or browser storage.
-The optional Sample report button uses illustrative local data without an API call.
 
 Dark mode is the default. The top bar has a Light mode / Dark mode toggle;
 the browser remembers your selection. The theme is applied before the page

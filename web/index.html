@@ -21,8 +21,7 @@
     <header class="topbar"><span>Workspace <span class="slash">/</span> <strong id="breadcrumb">Overview</strong></span><div class="topbar-right"><button id="theme-toggle" class="button theme-toggle" type="button" aria-label="Switch to light mode">☀ Light mode</button><span class="server-pill"><i></i> Server connected</span><span class="avatar">D</span></div></header>
     <div class="page">
       <section id="dashboard-view">
-        <div class="page-heading"><div><div class="eyebrow">NETWORK OVERVIEW</div><h1>IP intelligence</h1><p>A clearer picture of every address. Check anonymity, hosting and reputation.</p></div><button id="sample" class="button secondary">Explore sample results <span>↗</span></button></div>
-        <div id="sample-banner" class="notice sample-notice" hidden>Sample view · These are illustrative results, not live lookups. <button id="clear-sample">Clear sample</button></div>
+        <div class="page-heading"><div><div class="eyebrow">NETWORK OVERVIEW</div><h1>IP intelligence</h1><p>A clearer picture of every address. Check anonymity, hosting and reputation.</p></div></div>
         <div class="metrics">
           <article class="metric"><div class="metric-label">Addresses checked <span class="metric-icon">◎</span></div><div class="metric-value" id="count-total">0</div><div class="metric-caption" id="total-caption">Ready for your first scan</div><div class="metric-track"><span id="bar-total"></span></div></article>
           <article class="metric"><div class="metric-label">Anonymisation <span class="metric-icon amber">◌</span></div><div class="metric-value" id="count-anon">0</div><div class="metric-caption">VPN, proxy or Tor detected</div><div class="metric-track"><span class="amber-bg" id="bar-anon"></span></div></article>
@@ -58,7 +57,7 @@
       </section>
       <section id="email-view" hidden>
         <div class="eyebrow">EMAIL INTELLIGENCE</div><h1>Email lookup</h1><p class="intro">Check email validity, deliverability and reputation with IPQS.</p>
-        <section class="panel email-entry"><div class="panel-heading"><div><h2>Check an email address</h2><p>One address per lookup. Uses your server’s existing IPQS key.</p></div><button id="email-sample" class="button secondary" type="button">Sample report ↗</button></div>
+        <section class="panel email-entry"><div class="panel-heading"><div><h2>Check an email address</h2><p>One address per lookup. Uses your server’s existing IPQS key.</p></div></div>
           <form id="email-form"><label for="email-address">Email address</label><div class="email-input-row"><input id="email-address" type="email" maxlength="254" placeholder="name@example.com" autocomplete="off" required><button id="email-run" class="button primary" type="submit">Check email →</button></div><p class="email-disclosure">Submitted addresses are sent to IPQS for verification and use your account’s email lookup credits. Email results stay in this browser’s memory until refreshed.</p></form>
           <p id="email-progress" class="email-progress" role="status" hidden>Checking with IPQS… this can take up to 20 seconds.</p><p id="email-error" class="error" role="alert" hidden></p>
         </section>
