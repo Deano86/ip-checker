@@ -2,7 +2,7 @@
 
 Check public IPv4 addresses against IPinfo, IP2Location, proxycheck.io and
 Spamhaus DQS, and optionally IPQualityScore (IPQS), with registered allocation CIDRs from RDAP. Prints a terminal
-summary and writes a 33-column CSV with provider detections, diagnostics and review flags.
+summary and writes a 40-column CSV with provider detections, diagnostics and review flags.
 The browser dashboard adds live progress, summary cards, text-file import,
 search, filters, sortable results, per-address detail views and CSV export.
 
@@ -52,7 +52,7 @@ lookup engine behind the dashboard.
 
 - Paste or import up to 500 public IPv4 addresses, one per line.
 - Run one scan at a time and watch completed results arrive.
-- Search, sort, filter and open an address for all 33 report fields.
+- Search, sort, filter and open an address for all 40 report fields.
 - Export all completed rows, even while a scan is running.
 - Check key presence and missing dependencies in the Providers screen.
 - Explore clearly labelled sample results without credentials.
@@ -234,6 +234,36 @@ messages, response bodies, URLs and credentials are not exposed in reports.
 An IPinfo diagnostic lists both legacy and Lite outcomes when fallback runs.
 The original 26 columns retain their order; seven diagnostic columns are appended.
 Old scan reports are not re-enriched: run a new scan after rebuilding.
+
+## Risk gauges and provider comparison
+
+The Risk & Reputation panel shows speedometer-style gauges for the selected
+address's IPQS fraud score and proxycheck risk score. Both use their original
+0–100 scale, where higher means higher risk. They are separate provider
+models, not interchangeable scores or probabilities. Missing scores show
+an empty grey gauge labelled Unknown, never a misleading zero. Spamhaus
+reputation is shown as a listing status rather than an invented numeric score.
+
+Choose an address in the panel, or open a result to select its gauges.
+The detail view compares VPN, proxy/anonymity, Tor and hosting by provider.
+Explicit YES/NO differences are highlighted and can be filtered using
+Providers disagree. Unknown and unsupported fields do not count as negative
+votes. Anonymity comparison includes proxycheck's anonymous/VPN/proxy/Tor
+signals because IPQS and IP2 proxy flags cover anonymity more broadly.
+Hosting comparison uses proxycheck hosting against IPQS connection type.
+Provider definitions differ; a disagreement does not establish which is correct.
+
+Seven more IPQS fields are appended to the original 33 report columns:
+active VPN, active Tor, connection type, abuse frequency, verified crawler,
+hostname and country code. These are taken from the existing IPQS response;
+no additional endpoint or lookup call is added. Plan-restricted or absent
+context fields remain UNKNOWN and do not by themselves make lookup health
+partial. Active VPN/Tor positives contribute to the corresponding review flags.
+Suspected VPN/Tor and active VPN/Tor are kept separate in the report.
+Crawler identification provides context and never suppresses other detections.
+
+After pulling and rebuilding, run a new scan to populate the new fields.
+Saved history and lookup caching are not included in this update.
 
 References: [IPinfo Lite response fields](https://ipinfo.io/developers/lite-api),
 [IP2Location response fields and error codes](https://www.ip2location.io/ip2location-documentation).

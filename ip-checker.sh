@@ -172,7 +172,7 @@ spamhaus_lookup() {
     printf '%s|YES\n' "$joined"
 }
 
-jq -rn '["IP Address","CIDR","ASN","Provider","IP2 Proxy","PC Anonymous","PC VPN","PC Proxy","PC Tor","PC Hosting","PC Network Type","PC Risk","PC Confidence","Spamhaus Lists","Spamhaus Status","Anonymisation","Hosting","Threat Listing","Review","IPQS Status","IPQS Fraud Score","IPQS Proxy","IPQS VPN","IPQS Tor","IPQS Recent Abuse","IPQS Bot","IPinfo Status","IP2Location Status","Proxycheck Status","IPQS Detail","ASN Source","Provider Source","Lookup Health"] | @csv' > "$OUTPUT" || { echo "Cannot write output: $OUTPUT" >&2; exit 1; }
+jq -rn '["IP Address","CIDR","ASN","Provider","IP2 Proxy","PC Anonymous","PC VPN","PC Proxy","PC Tor","PC Hosting","PC Network Type","PC Risk","PC Confidence","Spamhaus Lists","Spamhaus Status","Anonymisation","Hosting","Threat Listing","Review","IPQS Status","IPQS Fraud Score","IPQS Proxy","IPQS VPN","IPQS Tor","IPQS Recent Abuse","IPQS Bot","IPinfo Status","IP2Location Status","Proxycheck Status","IPQS Detail","ASN Source","Provider Source","Lookup Health","IPQS Active VPN","IPQS Active Tor","IPQS Connection Type","IPQS Abuse Frequency","IPQS Verified Crawler","IPQS Hostname","IPQS Country"] | @csv' > "$OUTPUT" || { echo "Cannot write output: $OUTPUT" >&2; exit 1; }
 
 printf '\nLoaded %d unique public IPv4 addresses.\n\n' "${#IPS[@]}"
 printf '%-18s %-21s %-10s %-20s %-6s %-6s %-6s %-8s %-14s %s\n' IP CIDR ASN PROVIDER IP2 VPN TOR HOSTING SPAMHAUS REVIEW
@@ -230,6 +230,14 @@ for IP in "${IPS[@]}"; do
     IPQS_ABUSE=$(json_flag "$IPQS" recent_abuse)
     IPQS_BOT=$(json_flag "$IPQS" bot_status)
     IPQS_SCORE=$(jq -r 'if (.fraud_score | type) == "number" then if .fraud_score >= 0 and .fraud_score <= 100 then .fraud_score else "UNKNOWN" end else "UNKNOWN" end' <<< "$IPQS")
+    IPQS_ACTIVE_VPN=$(json_flag "$IPQS" active_vpn)
+    IPQS_ACTIVE_TOR=$(json_flag "$IPQS" active_tor)
+    IPQS_CRAWLER=$(json_flag "$IPQS" is_crawler)
+    IPQS_CONNECTION=$(jq -r 'if (.connection_type | type) == "string" and (.connection_type | length) > 0 then .connection_type else "UNKNOWN" end' <<< "$IPQS")
+    IPQS_VELOCITY=$(jq -r 'if (.abuse_velocity | type) == "string" and (.abuse_velocity | length) > 0 then .abuse_velocity else "UNKNOWN" end' <<< "$IPQS")
+    IPQS_HOST=$(jq -r 'if (.host | type) == "string" and (.host | length) > 0 then .host else "UNKNOWN" end' <<< "$IPQS")
+    IPQS_COUNTRY=$(jq -r 'if (.country_code | type) == "string" and (.country_code | length) > 0 then .country_code else "UNKNOWN" end' <<< "$IPQS")
+
 
     META=$(jq -n --argjson info "$INFO" --argjson lite "$LITE" --argjson ip2 "$IP2" \
         --argjson pc "$PC" --argjson ipqs "$IPQS_RAW" --arg ip "$IP" \
@@ -254,18 +262,18 @@ for IP in "${IPS[@]}"; do
     fi
 
     ANON=NO
-    if [[ "$PC_VPN" == YES || "$PC_PROXY" == YES || "$PC_TOR" == YES || "$PC_ANON" == YES || "$IP2_PROXY" == YES || "$IPQS_PROXY" == YES || "$IPQS_VPN" == YES || "$IPQS_TOR" == YES ]]; then
+    if [[ "$PC_VPN" == YES || "$PC_PROXY" == YES || "$PC_TOR" == YES || "$PC_ANON" == YES || "$IP2_PROXY" == YES || "$IPQS_PROXY" == YES || "$IPQS_VPN" == YES || "$IPQS_TOR" == YES || "$IPQS_ACTIVE_VPN" == YES || "$IPQS_ACTIVE_TOR" == YES ]]; then
         ANON=YES
     elif [[ "$PC_VPN" == UNKNOWN || "$PC_PROXY" == UNKNOWN || "$PC_TOR" == UNKNOWN || "$PC_ANON" == UNKNOWN || "$IP2_PROXY" == UNKNOWN ]] || { ((IPQS_ENABLED)) && [[ "$IPQS_PROXY" == UNKNOWN || "$IPQS_VPN" == UNKNOWN || "$IPQS_TOR" == UNKNOWN ]]; }; then
         ANON=UNKNOWN
     fi
-    if [[ "$PC_VPN" == YES || "$IPQS_VPN" == YES ]]; then ((VPN_COUNT+=1)); fi
-    if [[ "$ANON" == YES && "$PC_VPN" != YES && "$IPQS_VPN" != YES ]]; then ((PROXY_COUNT+=1)); fi
+    if [[ "$PC_VPN" == YES || "$IPQS_VPN" == YES || "$IPQS_ACTIVE_VPN" == YES ]]; then ((VPN_COUNT+=1)); fi
+    if [[ "$ANON" == YES && "$PC_VPN" != YES && "$IPQS_VPN" != YES && "$IPQS_ACTIVE_VPN" != YES ]]; then ((PROXY_COUNT+=1)); fi
     [[ "$PC_HOSTING" != YES ]] || ((HOST_COUNT+=1))
 
     FLAGS=()
-    if [[ "$PC_VPN" == YES || "$IPQS_VPN" == YES ]]; then FLAGS+=(VPN); fi
-    if [[ "$PC_TOR" == YES || "$IPQS_TOR" == YES ]]; then FLAGS+=(TOR); fi
+    if [[ "$PC_VPN" == YES || "$IPQS_VPN" == YES || "$IPQS_ACTIVE_VPN" == YES ]]; then FLAGS+=(VPN); fi
+    if [[ "$PC_TOR" == YES || "$IPQS_TOR" == YES || "$IPQS_ACTIVE_TOR" == YES ]]; then FLAGS+=(TOR); fi
     if [[ "$IP2_PROXY" == YES || "$PC_PROXY" == YES || "$PC_ANON" == YES || "$IPQS_PROXY" == YES ]]; then FLAGS+=(PROXY); fi
     [[ "$IPQS_ABUSE" != YES ]] || FLAGS+=(IPQS_RECENT_ABUSE)
     [[ "$IPQS_BOT" != YES ]] || FLAGS+=(IPQS_BOT)
@@ -291,7 +299,9 @@ for IP in "${IPS[@]}"; do
         --arg review "$REVIEW" --arg qsstatus "$IPQS_STATUS" --arg qsscore "$IPQS_SCORE" \
         --arg qsproxy "$IPQS_PROXY" --arg qsvpn "$IPQS_VPN" --arg qstor "$IPQS_TOR" \
         --arg qsabuse "$IPQS_ABUSE" --arg qsbot "$IPQS_BOT" --argjson meta "$META" --arg health "$HEALTH" \
-        '[$ip,$cidr,$asn,$provider,$ip2,$anon,$vpn,$proxy,$tor,$hosting,$network,$risk,$confidence,$sh,$shstatus,$anonymisation,$hosting,$threat,$review,$qsstatus,$qsscore,$qsproxy,$qsvpn,$qstor,$qsabuse,$qsbot,$meta["IPinfo Status"],$meta["IP2Location Status"],$meta["Proxycheck Status"],$meta["IPQS Detail"],$meta["ASN Source"],$meta["Provider Source"],$health] | @csv' >> "$OUTPUT" || { echo "Cannot append output: $OUTPUT" >&2; exit 1; }
+        --arg qactivevpn "$IPQS_ACTIVE_VPN" --arg qactivetor "$IPQS_ACTIVE_TOR" --arg qconnection "$IPQS_CONNECTION" \
+        --arg qvelocity "$IPQS_VELOCITY" --arg qcrawler "$IPQS_CRAWLER" --arg qhost "$IPQS_HOST" --arg qcountry "$IPQS_COUNTRY" \
+        '[$ip,$cidr,$asn,$provider,$ip2,$anon,$vpn,$proxy,$tor,$hosting,$network,$risk,$confidence,$sh,$shstatus,$anonymisation,$hosting,$threat,$review,$qsstatus,$qsscore,$qsproxy,$qsvpn,$qstor,$qsabuse,$qsbot,$meta["IPinfo Status"],$meta["IP2Location Status"],$meta["Proxycheck Status"],$meta["IPQS Detail"],$meta["ASN Source"],$meta["Provider Source"],$health,$qactivevpn,$qactivetor,$qconnection,$qvelocity,$qcrawler,$qhost,$qcountry] | @csv' >> "$OUTPUT" || { echo "Cannot append output: $OUTPUT" >&2; exit 1; }
     sleep 0.2
 done
 printf '\nTotal: %d | VPN: %d | Other proxy/anonymous: %d | Hosting: %d | Spamhaus threat: %d | Incomplete: %d\n' \

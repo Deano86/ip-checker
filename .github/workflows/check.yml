@@ -12,7 +12,10 @@ jobs:
       - name: Check Bash syntax
         run: bash -n ip-checker.sh
       - name: Check dashboard JavaScript
-        run: node --check web/app.js
+        run: |
+          node --check web/app.js
+          node --check web/signals.js
+          node --test tests/test_signals.cjs
       - name: Run offline regression tests
         run: python3 -m unittest discover -s tests -v
       - name: Build and smoke-test dashboard container

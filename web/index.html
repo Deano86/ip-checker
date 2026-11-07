@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>IP Checker · Network intelligence</title>
-  <link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script>
+  <link rel="stylesheet" href="/style.css"><script src="/signals.js" defer></script><script src="/app.js" defer></script>
 </head>
 <body>
   <aside class="sidebar">
@@ -39,8 +39,16 @@
           </section>
           <section class="panel provider-panel"><div class="panel-heading"><div><h2>Connected intelligence</h2><p>Five perspectives. One report.</p></div><span class="provider-symbol">◈</span></div><div id="provider-list"></div><div class="provider-footer"><span id="provider-summary">Checking configuration…</span><button class="text-button" data-view="providers">Manage setup ↗</button></div></section>
         </div>
+        <section class="panel risk-panel" aria-label="Risk and reputation gauges">
+          <div class="panel-heading"><div><h2>Risk &amp; reputation</h2><p>Provider scores for the selected address. Higher means greater risk.</p></div><label class="risk-select-label">Address <select id="risk-address" aria-label="Address for risk gauges"><option value="">Run a scan to choose an address</option></select></label></div>
+          <div class="risk-grid">
+            <article class="risk-card"><h3>IPQS fraud risk</h3><div class="dial unknown" id="dial-ipqs" role="meter" aria-label="IPQS fraud risk" aria-valuemin="0" aria-valuemax="100" aria-valuetext="Unknown"><span class="dial-marker"></span><div class="dial-inner"><strong id="dial-ipqs-value">—</strong><small id="dial-ipqs-caption">No score yet</small></div><span class="dial-min">0</span><span class="dial-max">100</span></div><p>IPQS score · 0–100</p></article>
+            <article class="risk-card"><h3>proxycheck risk</h3><div class="dial unknown" id="dial-pc" role="meter" aria-label="proxycheck risk" aria-valuemin="0" aria-valuemax="100" aria-valuetext="Unknown"><span class="dial-marker"></span><div class="dial-inner"><strong id="dial-pc-value">—</strong><small id="dial-pc-caption">No score yet</small></div><span class="dial-min">0</span><span class="dial-max">100</span></div><p>proxycheck score · 0–100</p></article>
+            <article class="reputation-card"><h3>Spamhaus reputation</h3><strong id="reputation-value">Awaiting scan</strong><p id="reputation-note">Listing status appears after a lookup.</p><div class="risk-facts"><span>Active VPN <b id="fact-vpn">Unknown</b></span><span>Active Tor <b id="fact-tor">Unknown</b></span><span>Connection <b id="fact-connection">Unknown</b></span><span>Provider comparison <b id="fact-agreement">Awaiting data</b></span></div></article>
+          </div><p class="risk-footnote">Scores use different provider models. A low score or no listing does not guarantee safety. “Suspected VPN” and “active VPN” are separate signals.</p>
+        </section>
         <section class="panel results-panel"><div class="panel-heading results-heading"><div><div class="title-with-badge"><h2>Scan results</h2><span id="row-count" class="count-badge">0</span></div><p id="results-caption">Your next investigation starts here.</p></div><button class="button secondary" id="export" disabled>↓ Export CSV</button></div>
-          <div class="table-toolbar"><label class="search"><span>⌕</span><input id="search" type="search" placeholder="Search IP, provider or ASN…" aria-label="Search results"></label><div class="filter-wrap"><label for="filter">Show</label><select id="filter"><option value="all">All results</option><option value="flagged">Flagged</option><option value="incomplete">Incomplete</option><option value="negative">No positives</option></select></div></div>
+          <div class="table-toolbar"><label class="search"><span>⌕</span><input id="search" type="search" placeholder="Search IP, provider or ASN…" aria-label="Search results"></label><div class="filter-wrap"><label for="filter">Show</label><select id="filter"><option value="all">All results</option><option value="flagged">Flagged</option><option value="incomplete">Incomplete</option><option value="disagreement">Providers disagree</option><option value="negative">No positives</option></select></div></div>
           <div class="table-scroll"><table><thead><tr><th><button data-sort="IP Address">IP address ↕</button></th><th><button data-sort="Provider">Network / provider ↕</button></th><th>Anonymisation</th><th>Hosting</th><th>Spamhaus</th><th><button data-sort="IPQS Fraud Score">IPQS score ↕</button></th><th><button data-sort="Review">Review ↕</button></th><th><span class="sr-only">Details</span></th></tr></thead><tbody id="results-body"></tbody></table></div>
           <div id="empty" class="empty"><div class="empty-graphic"><span>⌕</span><i></i></div><h3>A little context goes a long way.</h3><p>Run a check to uncover the networks and signals<br>behind your IP addresses.</p></div>
           <div class="table-footer"><span id="shown">Showing 0 results</span><span><i class="legend-dot"></i> A signal for review, not a verdict</span></div>

@@ -56,6 +56,8 @@ case "$*" in
       error) echo '{"success":false,"message":"Invalid key"}' ;;
       malformed) echo 'not json' ;;
       missing) echo '{"success":true}' ;;
+      context) echo '{"success":true,"fraud_score":75,"proxy":true,"vpn":true,"tor":false,"recent_abuse":false,"bot_status":false,"active_vpn":true,"active_tor":false,"connection_type":"Data Center","abuse_velocity":"low","is_crawler":false,"host":"example.test","country_code":"FI"}' ;;
+      active_only) echo '{"success":true,"fraud_score":75,"proxy":false,"vpn":false,"tor":false,"recent_abuse":false,"bot_status":false,"active_vpn":true,"active_tor":true}' ;;
       positive) echo '{"success":true,"fraud_score":95,"proxy":true,"vpn":true,"tor":true,"recent_abuse":true,"bot_status":true}' ;;
       *) echo '{"success":true,"fraud_score":0,"proxy":false,"vpn":false,"tor":false,"recent_abuse":false,"bot_status":false}' ;;
     esac ;;
@@ -95,7 +97,7 @@ esac
         with (self.base / 'ip-results.csv').open(newline='') as handle:
             rows = list(csv.DictReader(handle))
         self.assertEqual(len(rows), 1)
-        self.assertEqual(len(rows[0]), 33)
+        self.assertEqual(len(rows[0]), 40)
         self.assertIn('Skipping invalid/non-public IP', result.stderr)
         return rows[0]
 
@@ -147,6 +149,26 @@ esac
         self.assertEqual(row['Review'], 'INCOMPLETE')
         self.assertEqual(row['IPQS Bot'], 'UNKNOWN')
         self.assertEqual(row['Lookup Health'], 'PARTIAL')
+        self.assertEqual(row['IPQS Active VPN'], 'UNKNOWN')
+        self.assertEqual(row['IPQS Connection Type'], 'UNKNOWN')
+
+    def test_ipqs_extra_context_is_exported(self):
+        self.enable_ipqs()
+        row = self.row(MOCK_IPQS='context')
+        self.assertEqual(row['IPQS Active VPN'], 'YES')
+        self.assertEqual(row['IPQS Active Tor'], 'NO')
+        self.assertEqual(row['IPQS Verified Crawler'], 'NO')
+        self.assertEqual(row['IPQS Connection Type'], 'Data Center')
+        self.assertEqual(row['IPQS Abuse Frequency'], 'low')
+        self.assertEqual(row['IPQS Hostname'], 'example.test')
+        self.assertEqual(row['IPQS Country'], 'FI')
+
+    def test_active_detections_remain_positive_when_suspected_flags_differ(self):
+        self.enable_ipqs()
+        row = self.row(MOCK_IPQS='active_only')
+        self.assertEqual(row['Anonymisation'], 'YES')
+        self.assertIn('VPN', row['Review'])
+        self.assertIn('TOR', row['Review'])
 
     def test_lite_fields_recover_network_identity(self):
         row = self.row(MOCK_INFO='auth', MOCK_LITE='ok')

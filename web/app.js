@@ -1,6 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let rows = [], scanId = null, polling = false, sample = false, sortKey = 'IP Address', sortDirection = 1;
+let riskIP = '';
 const providers = [
   {name:'IPinfo',logo:'ip',description:'ASN & network ownership'},
   {name:'IP2Location',logo:'i2',description:'Proxy intelligence'},
@@ -100,6 +101,7 @@ function badge(value, threat=false) {
   return element('span','badge '+(value==='YES'?(threat?'threat':'yes'):value==='NO'?'no':'unknown'),label);
 }
 function render() {
+  renderGauges();
   const counts = {total:rows.length,anon:rows.filter(row=>row.Anonymisation==='YES').length,host:rows.filter(row=>row.Hosting==='YES').length,threat:rows.filter(row=>row['Threat Listing']==='YES').length};
   for (const [key,value] of Object.entries(counts)) { $('count-'+key).textContent=value; $('bar-'+key).style.width=(rows.length?value/rows.length*100:0)+'%'; }
   $('total-caption').textContent = rows.length ? (sample?'Illustrative sample scan':'In this scan') : 'Ready for your first scan';
@@ -107,7 +109,7 @@ function render() {
   $('export').disabled = !rows.length;
   const query = $('search').value.toLowerCase(), filter = $('filter').value;
   let visible = rows.filter(row => Object.values(row).join(' ').toLowerCase().includes(query));
-  visible = visible.filter(row => filter==='all' || (filter==='flagged' && !['INCOMPLETE','NO_POSITIVE_DETECTION'].includes(row.Review)) || (filter==='incomplete' && (row.Review==='INCOMPLETE' || row['Lookup Health']==='PARTIAL')) || (filter==='negative' && row.Review==='NO_POSITIVE_DETECTION' && row['Lookup Health']!=='PARTIAL'));
+  visible = visible.filter(row => filter==='all' || (filter==='flagged' && !['INCOMPLETE','NO_POSITIVE_DETECTION'].includes(row.Review)) || (filter==='incomplete' && (row.Review==='INCOMPLETE' || row['Lookup Health']==='PARTIAL')) || (filter==='disagreement' && IPSignals.comparisons(row).some(item=>item.disagrees)) || (filter==='negative' && row.Review==='NO_POSITIVE_DETECTION' && row['Lookup Health']!=='PARTIAL'));
   visible.sort((a,b)=>sortDirection*String(a[sortKey]).localeCompare(String(b[sortKey]),undefined,{numeric:true}));
   $('results-body').replaceChildren();
   for (const row of visible) {
@@ -122,6 +124,7 @@ function render() {
     const review = element('td');
     const label = row.Review==='NO_POSITIVE_DETECTION'?'No positives':row.Review==='INCOMPLETE'?'Incomplete':row.Review.replaceAll('_',' ').replaceAll('+',' · ');
     review.append(element('span','review-badge '+(row.Review==='NO_POSITIVE_DETECTION'?'negative':row.Review==='INCOMPLETE'?'incomplete':''),label)); if (row['Lookup Health']==='PARTIAL') review.append(element('small','partial-note','Partial provider data')); tr.append(review);
+    if (IPSignals.comparisons(row).some(item=>item.disagrees)) review.append(element('small','partial-note','Providers disagree'));
     const detailCell = element('td'); const button = element('button','text-button','↗'); button.setAttribute('aria-label','View details for '+row['IP Address']);
     detailCell.append(button); tr.append(detailCell); tr.addEventListener('click',()=>openDetails(row)); $('results-body').append(tr);
   }
@@ -131,12 +134,56 @@ function render() {
   $('shown').textContent = 'Showing '+visible.length+' of '+rows.length+' results';
 }
 function openDetails(row) {
+  riskIP=row['IP Address']; renderGauges();
   $('detail-ip').textContent = row['IP Address'];
   const dl=element('dl');
   if (row['Lookup Health']==='PARTIAL') dl.append(element('p','error','Some provider data is unavailable. See provider statuses below; positive detections still apply.'));
   Object.entries(row).forEach(([key,value])=> { const line=element('div','detail-row'); line.append(element('dt','',key),element('dd','',value == null || String(value).trim()==='' ? 'UNKNOWN' : value)); dl.append(line); });
-  $('detail-content').replaceChildren(dl); $('details').showModal();
+  const comparison=element('section','comparison-panel');
+  comparison.append(element('h3','','Provider comparison'),element('p','','Providers use different definitions and datasets. Unknown values are not negative detections.'));
+  const table=element('table','comparison-table');
+  const head=element('thead'), header=element('tr');
+  ['Signal','proxycheck','IP2','IPQS','Comparison'].forEach(label=>header.append(element('th','',label))); head.append(header); table.append(head);
+  const body=element('tbody');
+  IPSignals.comparisons(row).forEach(item=> {
+    const line=element('tr'); line.append(element('td','',item.name));
+    [item.pc,item.ip2,item.ipqs].forEach(value=> {const cell=element('td'); cell.append(value===null?element('span','unsupported','—'):badge(value)); line.append(cell);});
+    line.append(element('td',item.disagrees?'comparison-warning':'',item.disagrees?'Disagree':item.comparable?'Available agree':'Insufficient data')); body.append(line);
+  });
+  table.append(body); comparison.append(table);
+  comparison.append(element('p','','Active VPN/Tor is shown separately below; it is not the same as suspected VPN/Tor. IP2 does not supply separate VPN/Tor/hosting fields in our current lookup.'));
+  $('detail-content').replaceChildren(comparison,dl); $('details').showModal();
 }
+function setDial(name,value,notConfigured=false) {
+  const dial=$('dial-'+name), score=IPSignals.score(value);
+  dial.setAttribute('role',score===null?'group':'meter');
+  dial.classList.toggle('unknown',score===null);
+  dial.style.setProperty('--needle-angle',(score===null?0:-135+score*2.7)+'deg');
+  $('dial-'+name+'-value').textContent=score===null?'—':String(score);
+  $('dial-'+name+'-caption').textContent=score===null?(notConfigured?'Not enabled':'Unknown'):'out of 100';
+  dial.setAttribute('aria-valuetext',score===null?'Unknown':score+' out of 100');
+  if(score===null) dial.removeAttribute('aria-valuenow'); else dial.setAttribute('aria-valuenow',score);
+}
+function renderGauges() {
+  const select=$('risk-address');
+  if (!rows.some(row=>row['IP Address']===riskIP)) riskIP=rows[0]?.['IP Address'] || '';
+  select.replaceChildren();
+  if (!rows.length) {const option=element('option','','Run a scan to choose an address'); option.value=''; select.append(option);}
+  rows.forEach(row=> {const option=element('option','',row['IP Address']); option.value=row['IP Address']; select.append(option);});
+  select.value=riskIP; select.disabled=!rows.length;
+  const row=rows.find(row=>row['IP Address']===riskIP) || {};
+  setDial('ipqs',row['IPQS Fraud Score'],row['IPQS Status']==='NOT_CONFIGURED');
+  setDial('pc',row['PC Risk']);
+  $('reputation-value').textContent=!rows.length?'Awaiting scan':row['Threat Listing']==='YES'?'Threat listing detected':row['Spamhaus Status']==='YES'?'Listed: '+row['Spamhaus Lists']:row['Spamhaus Status']==='NO'?'No Spamhaus listing':'Unknown';
+  $('reputation-value').className=row['Threat Listing']==='YES'?'reputation-threat':row['Spamhaus Status']==='YES'?'reputation-listed':row['Spamhaus Status']==='NO'?'reputation-clear':'reputation-unknown';
+  $('reputation-note').textContent=row['Spamhaus Status']==='NO'?'No listing returned. This is not a guarantee of safety.':row['Spamhaus Status']==='YES'?'Check list details before making a decision.':'Reputation needs a successful Spamhaus lookup.';
+  for (const [id,key] of [['vpn','IPQS Active VPN'],['tor','IPQS Active Tor'],['connection','IPQS Connection Type']]) {
+    const value=row[key]; $('fact-'+id).textContent={YES:'Yes',NO:'No'}[value] || (value && value!=='UNKNOWN'?value:'Unknown');
+  }
+  const comparison=IPSignals.comparisons(row), conflicts=comparison.filter(item=>item.disagrees);
+  $('fact-agreement').textContent=conflicts.length?conflicts.length+' disagreement'+(conflicts.length===1?'':'s'):comparison.some(item=>item.comparable)?'Available signals agree':'Insufficient data';
+}
+$('risk-address').addEventListener('change',event=> {riskIP=event.target.value; renderGauges();});
 $('close-details').addEventListener('click',()=>$('details').close());
 $('details').addEventListener('click',event=> { if(event.target===$('details') && event.clientX < $('details').getBoundingClientRect().left) $('details').close(); });
 $('search').addEventListener('input',render); $('filter').addEventListener('change',render);
@@ -161,6 +208,7 @@ $('sample').addEventListener('click',()=> {
     sampleRow('203.0.113.50','Example listed network','AS64504','203.0.113.0/24',{'Spamhaus Lists':'SBL','Spamhaus Status':'YES','Threat Listing':'YES',Review:'SPAMHAUS_THREAT'}),
     sampleRow('203.0.113.60','Example unavailable source','AS64505','203.0.113.0/24',{'PC Anonymous':'UNKNOWN','PC VPN':'UNKNOWN',Anonymisation:'UNKNOWN',Review:'INCOMPLETE'})
   ];
+  rows=rows.map((row,index)=>({...row,'IPQS Active VPN':index===2?'YES':'NO','IPQS Active Tor':'NO','IPQS Connection Type':index<2?'Data Center':'Residential','IPQS Abuse Frequency':'none','IPQS Verified Crawler':'NO','IPQS Hostname':'example.test','IPQS Country':'GB',...(index===2?{'PC VPN':'NO','PC Anonymous':'NO','PC Risk':'33','IPQS Fraud Score':'75','IPQS VPN':'YES','IPQS Proxy':'YES'}:{})}));
   $('results-caption').textContent='Illustrative sample · Not live provider data'; render();
 });
 $('clear-sample').addEventListener('click',()=> { sample=false; rows=[]; $('sample-banner').hidden=true; $('results-caption').textContent='Your next investigation starts here.'; render(); });
