@@ -24,9 +24,9 @@ async function api(path, options) {
   return data;
 }
 function setView(view) {
-  ['dashboard','email','providers','guide'].forEach(name => $(name+'-view').hidden = name !== view);
+  ['dashboard','email','domain','providers','guide'].forEach(name => $(name+'-view').hidden = name !== view);
   document.querySelectorAll('.nav-item').forEach(node => node.classList.toggle('active', node.dataset.view === view));
-  $('breadcrumb').textContent = {dashboard:'Overview',email:'Email lookup',providers:'Providers',guide:'Quick guide'}[view];
+  $('breadcrumb').textContent = {dashboard:'Overview',email:'Email lookup',domain:'Domain lookup',providers:'Providers',guide:'Quick guide'}[view];
 }
 document.querySelectorAll('[data-view]').forEach(node => node.addEventListener('click', () => setView(node.dataset.view)));
 
@@ -249,4 +249,39 @@ $('email-export').addEventListener('click',()=> {
   const quote=value=>{value=String(value); if(/^[=+@-]/.test(value.trimStart())) value="'"+value; return '"'+value.replaceAll('"','""')+'"';};
   const csv=[Object.keys(emailResult),Object.values(emailResult)].map(row=>row.map(quote).join(',')).join('\r\n');
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); const link=element('a'); link.href=url; link.download='email-result.csv'; link.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
+
+let domainResult=null;
+function renderDomain(result) {
+  domainResult=result;
+  $('domain-report').hidden=false;
+  $('domain-result-name').textContent=result.report.Domain;
+  $('domain-partial').hidden=result.health!=='PARTIAL';
+  $('domain-fields').replaceChildren();
+  for(const [key,value] of Object.entries(result.report)) {
+    const line=element('div','detail-row'); line.append(element('dt','',key),element('dd','',value || 'UNKNOWN')); $('domain-fields').append(line);
+  }
+  $('domain-query-status').replaceChildren();
+  for(const query of result.queries) $('domain-query-status').append(element('span','badge '+(['OK','NO_RECORDS'].includes(query.status)?'no':'unknown'),query.type+' · '+query.status));
+  $('domain-records').replaceChildren();
+  for(const record of result.records) {const tr=element('tr'); for(const key of ['Type','Name','Value','TTL']) tr.append(element('td','',record[key])); $('domain-records').append(tr);}
+  $('domain-empty').hidden=result.records.length>0;
+}
+$('domain-form').addEventListener('submit',async event=> {
+  event.preventDefault();
+  $('domain-error').hidden=true; $('domain-report').hidden=true; domainResult=null;
+  $('domain-run').disabled=true; $('domain-progress').hidden=false;
+  try {renderDomain(await api('/api/domain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({domain:$('domain-name').value})}));}
+  catch(error) {$('domain-error').textContent=error.message; $('domain-error').hidden=false;}
+  finally {$('domain-run').disabled=false; $('domain-progress').hidden=true;}
+});
+$('domain-export').addEventListener('click',()=> {
+  if(!domainResult) return;
+  const quote=value=>{value=String(value); if(/^[=+@-]/.test(value.trimStart())) value="'"+value; return '"'+value.replaceAll('"','""')+'"';};
+  const rows=[['Section','Field / type','Value','TTL (seconds)']];
+  Object.entries(domainResult.report).forEach(([key,value])=>rows.push(['Registration',key,value,'']));
+  domainResult.queries.forEach(query=>rows.push(['DNS query',query.type,query.status,'']));
+  domainResult.records.forEach(record=>rows.push(['DNS record',record.Type+' '+record.Name,record.Value,record.TTL]));
+  const csv=rows.map(row=>row.map(quote).join(',')).join('\r\n');
+  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); const link=element('a'); link.href=url; link.download='domain-result.csv'; link.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
 });

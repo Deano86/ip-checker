@@ -18,6 +18,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 import email_lookup
+import domain_lookup
 
 ROOT = Path(__file__).resolve().parent
 KEYS = {'IPinfo': 'IPINFO_KEY', 'IP2Location': 'IP2_KEY',
@@ -161,6 +162,7 @@ class ScanStore:
 
 STORE = ScanStore()
 EMAIL_SLOTS = threading.BoundedSemaphore(2)
+DOMAIN_SLOTS = threading.BoundedSemaphore(2)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -236,7 +238,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.trusted_request() or self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
             return self.send(403, {'error': 'Use a same-origin JSON request.'})
         path = urlsplit(self.path).path
-        if path not in ('/api/scans', '/api/email'):
+        if path not in ('/api/scans', '/api/email', '/api/domain'):
             return self.send(404, {'error': 'Not found.'})
         try:
             size = int(self.headers.get('Content-Length', '0'))
@@ -245,6 +247,14 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(size))
             if not isinstance(data, dict):
                 raise ValueError('Expected a JSON object.')
+            if path == '/api/domain':
+                domain = domain_lookup.validate_domain(data.get('domain'))
+                if not DOMAIN_SLOTS.acquire(blocking=False):
+                    return self.send(429, {'error': 'Domain lookups are busy. Try again shortly.'})
+                try:
+                    return self.send(200, domain_lookup.lookup(domain))
+                finally:
+                    DOMAIN_SLOTS.release()
             if path == '/api/email':
                 email = email_lookup.validate_email(data.get('email'))
                 key = secret_values().get('IPQS_KEY')

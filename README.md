@@ -285,5 +285,32 @@ styles load to minimise a white flash. Existing IP scan behaviour is preserved.
 
 Reference: [IPQS email verification](https://www.ipqualityscore.com/documentation/email-validation-api/overview).
 
+## WHOIS / domain lookup
+
+Choose Domain lookup in the sidebar to retrieve public registration information
+using RDAP and query DNS records through Cloudflare's DNS-over-HTTPS resolver.
+No API key is required. Enter a registered domain such as `example.com` or
+`example.co.uk`; HTTP(S) URLs are accepted and reduced to their hostname.
+International domain names are normalised to IDNA ASCII. IP literals are rejected.
+
+The registration report includes registrar, creation/expiration/update dates,
+status, nameservers, DNSSEC delegation status and registrant organisation when
+published. Personal details may be withheld. RDAP support varies by registry;
+subdomains may have no separate registration record. No raw port-43 WHOIS
+connection is made. DNS queries cover A, AAAA, MX, NS, TXT, CNAME and SOA.
+
+Registration and DNS queries run independently in parallel. Missing records,
+NXDOMAIN, unsupported registration, rate limits and network errors are shown
+separately. These results are not a domain-availability check. Registration,
+DNS records and query statuses can be exported together as CSV. The dashboard
+does not save domain lookup history.
+
+Queries are sent to RDAP.org and its public HTTPS registry referrals, and to
+Cloudflare DNS. Lookups do not visit the submitted website. Registry data is
+displayed as text; private/insecure RDAP redirects are rejected.
+
+References: [RDAP.org](https://about.rdap.org/),
+[Cloudflare DNS JSON API](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/).
+
 References: [IPinfo Lite response fields](https://ipinfo.io/developers/lite-api),
 [IP2Location response fields and error codes](https://www.ip2location.io/ip2location-documentation).

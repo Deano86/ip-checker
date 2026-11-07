@@ -150,6 +150,18 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(status, 502)
         self.assertIn(b'denied email API access', body)
 
+    def test_domain_lookup_needs_no_secrets(self):
+        result = {'report': {'Domain': 'example.com', 'Registration Lookup': 'OK'}, 'records': [], 'queries': [], 'health': 'OK'}
+        with patch.object(dashboard.domain_lookup, 'lookup', return_value=result) as lookup:
+            status, body, _ = self.request('/api/domain', {'domain': 'EXAMPLE.COM'})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)['report']['Domain'], 'example.com')
+        lookup.assert_called_once_with('example.com')
+
+    def test_invalid_and_cross_origin_domain_requests_are_rejected(self):
+        self.assertEqual(self.request('/api/domain', {'domain': '127.0.0.1'})[0], 400)
+        self.assertEqual(self.request('/api/domain', {'domain': 'example.com'}, {'Origin': 'https://evil.example'})[0], 403)
+
 
 if __name__ == '__main__':
     unittest.main()
