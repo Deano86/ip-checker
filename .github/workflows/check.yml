@@ -17,8 +17,9 @@ jobs:
         run: python3 -m unittest discover -s tests -v
       - name: Build and smoke-test dashboard container
         run: |
+          chmod -R go-rwx dashboard.py provider_data.py ip-checker.sh web
           docker build -t ip-checker:test .
-          docker run -d --name ip-checker-test -p 127.0.0.1:8080:8080 ip-checker:test
+          docker run -d --user 12345:12345 --read-only --tmpfs /tmp:mode=1777,size=32m --name ip-checker-test -p 127.0.0.1:8080:8080 ip-checker:test
           trap 'docker logs ip-checker-test; docker rm -f ip-checker-test' EXIT
           curl --fail --max-time 3 --retry 10 --retry-all-errors --retry-delay 1 http://127.0.0.1:8080/api/config | jq -e '.ready == false'
           curl --fail http://127.0.0.1:8080/ -o /dev/null
