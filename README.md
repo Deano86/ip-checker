@@ -1,10 +1,35 @@
 # IP Checker dashboard
 
+**IP Checker by [Deano86](https://github.com/Deano86)**
+
 Check public IPv4 addresses against IPinfo, IP2Location, proxycheck.io and
 Spamhaus DQS, and optionally IPQualityScore (IPQS), with registered allocation CIDRs from RDAP. Prints a terminal
 summary and writes a 40-column CSV with provider detections, diagnostics and review flags.
 The browser dashboard adds live progress, summary cards, text-file import,
 search, filters, sortable results, per-address detail views and CSV export.
+
+## Themes
+
+Use the **Theme** menu in the top bar to switch instantly. Your browser
+remembers the choice, including after a refresh. Slate is the default;
+the existing Light preference remains available if you explicitly want it.
+
+| Theme | Feel |
+| --- | --- |
+| Slate | The original subdued blue-grey and teal. |
+| Graphite | Neutral charcoal, muted sage accents and soft shadows. |
+| Midnight | Deep navy, steel-blue accents and sharper corners. |
+| Forest | Warm greens, rounder cards and serif page titles. |
+| Light | Optional bright appearance. |
+
+## Screenshots
+
+Actual dashboard captures from a fresh checkout without configured provider keys.
+Click an image to open it at full size.
+
+| Graphite | Midnight | Forest |
+| :---: | :---: | :---: |
+| [![Graphite theme](docs/screenshots/graphite-overview.png)](docs/screenshots/graphite-overview.png) | [![Midnight theme](docs/screenshots/midnight-overview.png)](docs/screenshots/midnight-overview.png) | [![Forest theme](docs/screenshots/forest-overview.png)](docs/screenshots/forest-overview.png) |
 
 ## Start the dashboard with Docker
 
@@ -279,8 +304,9 @@ Absent or plan-restricted fields remain UNKNOWN. A timed-out mailbox check
 does not become a confirmed invalid address. The report can be exported to
 CSV; email input/results are not persisted to disk or browser storage.
 
-Dark mode is the default. The top bar has a Light mode / Dark mode toggle;
-the browser remembers your selection. The theme is applied before the page
+Dark mode is the default. The top bar has a Theme menu with four dark palettes
+and an optional Light appearance; the browser remembers your selection.
+The theme is applied before the page
 styles load to minimise a white flash. Existing IP scan behaviour is preserved.
 
 Reference: [IPQS email verification](https://www.ipqualityscore.com/documentation/email-validation-api/overview).

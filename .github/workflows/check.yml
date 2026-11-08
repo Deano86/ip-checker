@@ -16,7 +16,7 @@ jobs:
           node --check web/app.js
           node --check web/signals.js
           node --check web/theme.js
-          node --test tests/test_signals.cjs
+          node --test tests/test_signals.cjs tests/test_theme.cjs
       - name: Run offline regression tests
         run: python3 -m unittest discover -s tests -v
       - name: Build and smoke-test dashboard container

@@ -2,12 +2,12 @@
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>IP Checker · Network intelligence</title>
+  <title>IP Checker by Deano86 · Network intelligence</title>
   <script src="/theme.js"></script><link rel="stylesheet" href="/style.css"><script src="/signals.js" defer></script><script src="/app.js" defer></script>
 </head>
 <body>
   <aside class="sidebar">
-    <a class="brand" href="/" aria-label="IP Checker home"><span class="brand-mark">ip<span>↗</span></span><span>IP Checker<small>NETWORK INTELLIGENCE</small></span></a>
+    <div class="brand"><a class="brand-mark" href="/" aria-label="IP Checker home">ip<span>↗</span></a><span><a href="/">IP Checker</a><small>by <a href="https://github.com/Deano86" target="_blank" rel="noreferrer">Deano86 ↗</a></small></span></div>
     <div class="nav-label">WORKSPACE</div>
     <nav aria-label="Main navigation">
       <button class="nav-item active" data-view="dashboard"><span>▦</span> Overview <span class="nav-dot"></span></button>
@@ -19,7 +19,7 @@
     <div class="sidebar-bottom"><span class="local-dot"></span> Your server. Your keys.<p>Credentials never reach the browser.</p><a href="https://github.com/Deano86/ip-checker" target="_blank" rel="noreferrer">View on GitHub ↗</a></div>
   </aside>
   <main>
-    <header class="topbar"><span>Workspace <span class="slash">/</span> <strong id="breadcrumb">Overview</strong></span><div class="topbar-right"><button id="theme-toggle" class="button theme-toggle" type="button" aria-label="Switch to light mode">☀ Light mode</button><span class="server-pill"><i></i> Server connected</span><span class="avatar">D</span></div></header>
+    <header class="topbar"><span>Workspace <span class="slash">/</span> <strong id="breadcrumb">Overview</strong></span><div class="topbar-right"><label class="theme-picker"><span>Theme</span><select id="theme-select" aria-label="Dashboard theme"><option value="slate">Slate</option><option value="graphite">Graphite</option><option value="midnight">Midnight</option><option value="forest">Forest</option><option value="light">Light</option></select></label><span class="server-pill"><i></i> Server connected</span><a class="avatar" href="https://github.com/Deano86" target="_blank" rel="noreferrer" aria-label="Deano86 on GitHub">D</a></div></header>
     <div class="page">
       <section id="dashboard-view">
         <div class="page-heading"><div><div class="eyebrow">NETWORK OVERVIEW</div><h1>IP intelligence</h1><p>A clearer picture of every address. Check anonymity, hosting and reputation.</p></div></div>
@@ -54,7 +54,7 @@
           <div id="empty" class="empty"><div class="empty-graphic"><span>⌕</span><i></i></div><h3>A little context goes a long way.</h3><p>Run a check to uncover the networks and signals<br>behind your IP addresses.</p></div>
           <div class="table-footer"><span id="shown">Showing 0 results</span><span><i class="legend-dot"></i> A signal for review, not a verdict</span></div>
         </section>
-        <footer class="page-footer"><span>IP Checker <span class="footer-dot">·</span> Built for a closer look</span><span>IPinfo / IP2Location / proxycheck.io / Spamhaus / IPQS</span></footer>
+        <footer class="page-footer"><span>IP Checker <span class="footer-dot">·</span> by <a href="https://github.com/Deano86" target="_blank" rel="noreferrer">Deano86 ↗</a></span><span>IPinfo / IP2Location / proxycheck.io / Spamhaus / IPQS</span></footer>
       </section>
       <section id="email-view" hidden>
         <div class="eyebrow">EMAIL INTELLIGENCE</div><h1>Email lookup</h1><p class="intro">Check email validity, deliverability and reputation with IPQS.</p>

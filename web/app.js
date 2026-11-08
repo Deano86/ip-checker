@@ -207,18 +207,8 @@ async function init() {
 }
 init();
 
-function updateThemeButton() {
-  const dark=document.documentElement.dataset.theme==='dark';
-  $('theme-toggle').textContent=dark?'☀ Light mode':'☾ Dark mode';
-  $('theme-toggle').setAttribute('aria-label',dark?'Switch to light mode':'Switch to dark mode');
-}
-$('theme-toggle').addEventListener('click',()=> {
-  const theme=document.documentElement.dataset.theme==='dark'?'light':'dark';
-  document.documentElement.dataset.theme=theme;
-  try {localStorage.setItem('ip-checker-theme',theme);} catch {}
-  updateThemeButton();
-});
-updateThemeButton();
+$('theme-select').value=document.documentElement.dataset.palette || 'slate';
+$('theme-select').addEventListener('change',event=>window.IPCheckerTheme.apply(event.target.value));
 let emailResult=null;
 function renderEmail(report) {
   emailResult=report;
