@@ -24,8 +24,38 @@ the existing Light preference remains available if you explicitly want it.
 
 ## Screenshots
 
-Actual dashboard captures from a fresh checkout without configured provider keys.
-Click an image to open it at full size.
+Full-page captures of every dashboard page, including populated risk dials.
+These use illustrative documentation data, not live provider results or real credentials.
+Click an image to open it at full size. The scan-result popup scrolls internally.
+
+### Overview and risk gauges
+
+[![Slate overview with risk gauges and scan results](docs/screenshots/slate-overview.png)](docs/screenshots/slate-overview.png)
+
+### Scan-result popup
+
+Click a scan-result row to see IPQS and proxycheck risk dials, Spamhaus status,
+review flags, provider comparisons and the complete address report.
+
+[![Centred scan-result popup with risk dials](docs/screenshots/scan-result-popup.png)](docs/screenshots/scan-result-popup.png)
+
+### Email lookup
+
+[![Full email lookup page with fraud risk dial](docs/screenshots/email-lookup.png)](docs/screenshots/email-lookup.png)
+
+### Domain lookup
+
+[![Full domain lookup page with registration, Spamhaus DBL and ZRD, and DNS records](docs/screenshots/domain-lookup.png)](docs/screenshots/domain-lookup.png)
+
+### Providers
+
+[![Full provider configuration page](docs/screenshots/providers.png)](docs/screenshots/providers.png)
+
+### Quick guide
+
+[![Full quick guide page](docs/screenshots/quick-guide.png)](docs/screenshots/quick-guide.png)
+
+### Other dark themes — full-page overviews
 
 | Graphite | Midnight | Forest |
 | :---: | :---: | :---: |

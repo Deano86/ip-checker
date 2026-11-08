@@ -152,7 +152,29 @@ function openDetails(row) {
   });
   table.append(body); comparison.append(table);
   comparison.append(element('p','','Active VPN/Tor is shown separately below; it is not the same as suspected VPN/Tor. IP2 does not supply separate VPN/Tor/hosting fields in our current lookup.'));
-  $('detail-content').replaceChildren(comparison,dl); $('details').showModal(); $('detail-content').scrollTop=0;
+  const risk=element('section','popup-risk');
+  risk.append(element('h3','','Risk & reputation'));
+  const gauges=element('div','popup-risk-grid');
+  for(const [name,title] of [['detail-ipqs','IPQS fraud risk'],['detail-pc','proxycheck risk']]) {
+    const card=element('article','risk-card'); card.append(element('h3','',title));
+    const dial=element('div','dial unknown'); dial.id='dial-'+name; dial.setAttribute('role','group'); dial.setAttribute('aria-label',title); dial.setAttribute('aria-valuemin','0'); dial.setAttribute('aria-valuemax','100');
+    const inner=element('div','dial-inner');
+    const value=element('strong','','—'); value.id='dial-'+name+'-value';
+    const caption=element('small','','Unknown'); caption.id='dial-'+name+'-caption';
+    inner.append(value,caption); dial.append(element('span','dial-marker'),inner,element('span','dial-min','0'),element('span','dial-max','100'));
+    card.append(dial,element('p','','Provider score · 0–100')); gauges.append(card);
+  }
+  const state=element('article','popup-risk-state'); state.append(element('h3','','Spamhaus reputation'));
+  const threat=row['Threat Listing']==='YES';
+  state.append(element('strong',threat?'popup-threat':'',threat?'Threat listing detected':row['Spamhaus Status']==='YES'?'Listed: '+row['Spamhaus Lists']:row['Spamhaus Status']==='NO'?'No listing returned':'Unknown'));
+  state.append(element('p','','Lists: '+(row['Spamhaus Lists'] || 'UNKNOWN')));
+  state.append(element('p','','Review: '+(row.Review || 'UNKNOWN').replaceAll('_',' ').replaceAll('+',' · ')));
+  if(row['Lookup Health']==='PARTIAL') state.append(element('span','badge unknown','Partial provider data'));
+  gauges.append(state); risk.append(gauges,element('p','risk-footnote','Higher scores mean greater risk within each provider’s model. Scores and listing status are separate signals; a low score does not cancel a threat listing.'));
+  $('detail-content').replaceChildren(risk,comparison,dl);
+  setDial('detail-ipqs',row['IPQS Fraud Score'],row['IPQS Status']==='NOT_CONFIGURED');
+  setDial('detail-pc',row['PC Risk']);
+  $('details').showModal(); $('detail-content').scrollTop=0;
 }
 function setDial(name,value,notConfigured=false) {
   const dial=$('dial-'+name), score=IPSignals.score(value);
