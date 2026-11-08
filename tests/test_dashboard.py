@@ -65,6 +65,15 @@ class InputTests(unittest.TestCase):
 
 class HTTPTests(unittest.TestCase):
     def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db = dashboard.Database(Path(self.tmp.name) / 'test.sqlite3')
+        self.user_id = self.db.create_user('tester', 'testing password for dashboard', 'admin', must_change=False)
+        self.db_patch = patch.object(dashboard, 'DB', self.db)
+        self.db_patch.start()
+        self.addCleanup(self.db_patch.stop)
+        self.token, _ = self.db.login('tester', 'testing password for dashboard', '127.0.0.1')
+        self.csrf = self.db.session(self.token)['csrf']
         self.store = dashboard.ScanStore()
         self.store_patch = patch.object(dashboard, 'STORE', self.store)
         self.store_patch.start()
@@ -82,7 +91,7 @@ class HTTPTests(unittest.TestCase):
 
     def request(self, path, data=None, headers=None):
         request = Request(self.url + path, data=json.dumps(data).encode() if data is not None else None,
-                          headers={'Content-Type': 'application/json', **(headers or {})})
+                          headers={'Content-Type': 'application/json', 'Cookie': 'ipchecker_session='+self.token, 'X-CSRF-Token': self.csrf, **(headers or {})})
         try:
             with urlopen(request, timeout=5) as response:
                 return response.status, response.read(), response.headers
@@ -115,6 +124,7 @@ class HTTPTests(unittest.TestCase):
                 scan = self.store.scans[scan_id]
                 scan.update(status='complete', completed=1, rows=[{'IP Address': addresses[0], 'Provider': '=bad()'}])
                 self.store.active = None
+                self.store.persist(scan_id)
         with patch.object(dashboard, 'configuration', return_value={'ready': True}), patch.object(self.store, 'run', side_effect=fake_run):
             status, body, _ = self.request('/api/scans', {'ips': '1.1.1.1'})
             self.assertEqual(status, 202)

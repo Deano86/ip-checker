@@ -2,6 +2,7 @@
 const $ = id => document.getElementById(id);
 let rows = [], scanId = null, polling = false, sortKey = 'IP Address', sortDirection = 1;
 let riskIP = '';
+let currentUser=null, csrfToken='', historyPage=1;
 const providers = [
   {name:'IPinfo',logo:'ip',description:'ASN & network ownership'},
   {name:'IP2Location',logo:'i2',description:'Proxy intelligence'},
@@ -18,15 +19,21 @@ function element(tag, className, text) {
 }
 function showError(message) { $('error').textContent = message; $('error').hidden = !message; }
 async function api(path, options) {
+  options={...options,headers:{...(options?.headers || {}),...(options?.method && options.method!=='GET'?{'X-CSRF-Token':csrfToken}:{})}};
   const response = await fetch(path, options);
+  if(response.status===401) window.location.replace('/login');
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'The server could not complete this request.');
   return data;
 }
 function setView(view) {
-  ['dashboard','email','domain','providers','guide'].forEach(name => $(name+'-view').hidden = name !== view);
+  if(currentUser?.must_change && view!=='account') view='account';
+  if(view==='admin' && currentUser?.role!=='admin') view='account';
+  ['dashboard','email','domain','providers','guide','history','account','admin'].forEach(name => $(name+'-view').hidden = name !== view);
   document.querySelectorAll('.nav-item').forEach(node => node.classList.toggle('active', node.dataset.view === view));
-  $('breadcrumb').textContent = {dashboard:'Overview',email:'Email lookup',domain:'Domain lookup',providers:'Providers',guide:'Quick guide'}[view];
+  $('breadcrumb').textContent = {dashboard:'Overview',email:'Email lookup',domain:'Domain lookup',providers:'Providers',guide:'Quick guide',history:'Saved results',account:'Account',admin:'Administration'}[view];
+  if(view==='history') loadHistory();
+  if(view==='admin') loadAdmin();
 }
 document.querySelectorAll('[data-view]').forEach(node => node.addEventListener('click', () => setView(node.dataset.view)));
 
@@ -75,7 +82,7 @@ $('scan-form').addEventListener('submit',async event => {
   try {
     const result = await api('/api/scans',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ips:$('ips').value})});
     scanId = result.id;
-    localStorage.setItem('ip-checker-last-scan',scanId); rows = []; render(); await poll();
+    localStorage.setItem('ip-checker-last-scan-'+currentUser.id,scanId); rows = []; render(); await poll();
   } catch (error) { showError(error.message); $('run').disabled = false; }
 });
 async function poll() {
@@ -220,14 +227,14 @@ $('export').addEventListener('click',()=> {
 async function init() {
   render(); const config=await loadConfig();
   if (config && !config.active_scan) {
-    const last=localStorage.getItem('ip-checker-last-scan');
+    const last=localStorage.getItem('ip-checker-last-scan-'+currentUser.id);
     if (last && /^[a-f0-9]{32}$/.test(last)) {
       try { const scan=await api('/api/scans/'+last); scanId=last; rows=scan.rows; render(); $('results-caption').textContent='Restored last scan · '+scan.completed+' addresses checked'; }
-      catch { localStorage.removeItem('ip-checker-last-scan'); }
+      catch { localStorage.removeItem('ip-checker-last-scan-'+currentUser.id); }
     }
   }
 }
-init();
+startSession();
 
 $('theme-select').value=document.documentElement.dataset.palette || 'slate';
 $('theme-select').addEventListener('change',event=>window.IPCheckerTheme.apply(event.target.value));
@@ -313,4 +320,180 @@ $('domain-export').addEventListener('click',()=> {
   domainResult.records.forEach(record=>rows.push(['DNS record',record.Type+' '+record.Name,record.Value,record.TTL]));
   const csv=rows.map(row=>row.map(quote).join(',')).join('\r\n');
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); const link=element('a'); link.href=url; link.download='domain-result.csv'; link.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
+
+async function startSession() {
+  try {
+    const session=await api('/api/session');
+    if(!session.user) {window.location.replace('/login'); return;}
+    currentUser=session.user; csrfToken=currentUser.csrf;
+    $('account-summary').textContent=currentUser.username+' · '+(currentUser.role==='admin'?'Administrator':'User');
+    $('admin-nav').hidden=currentUser.role!=='admin';
+    $('history-scope-label').hidden=currentUser.role!=='admin';
+    const security=await loadSecurity();
+    if(currentUser.must_change) {
+      $('password-note').textContent='Change your temporary password before using the workspace. Use 15–128 characters.';
+      setView('account');
+    } else if(security?.needs_mfa || security?.needs_setup) {setView('account');} else await init();
+  } catch(error) {showError(error.message);}
+}
+const post=(path,data={})=>api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+$('sign-out').addEventListener('click',async()=> {
+  try {await post('/api/logout'); window.location.replace('/login');} catch(error) {showError(error.message);}
+});
+$('password-form').addEventListener('submit',async event=> {
+  event.preventDefault(); const form=event.target, message=$('account-message');
+  if(form.elements.next.value!==form.elements.confirm.value) {message.textContent='New passwords do not match.'; return;}
+  const button=form.querySelector('button'); button.disabled=true;
+  try {
+    await post('/api/password',{current_password:form.elements.current.value,new_password:form.elements.next.value});
+    form.reset(); window.location.replace('/login');
+  } catch(error) {message.textContent=error.message;} finally {button.disabled=false;}
+});
+function dateLabel(seconds) {return new Date(seconds*1000).toLocaleString();}
+async function loadHistory() {
+  $('history-message').textContent='Loading saved results…';
+  try {
+    const params=new URLSearchParams({q:$('history-query').value,kind:$('history-kind').value,scope:$('history-scope').value,page:String(historyPage)});
+    const result=await api('/api/history?'+params);
+    $('history-items').replaceChildren();
+    for(const item of result.items) {
+      const tr=element('tr');
+      const owner=element('td','',item.kind.toUpperCase()); owner.append(element('small','history-owner',item.username));
+      tr.append(element('td','',dateLabel(item.created)),owner,element('td','history-subject',item.subject),element('td','',item.status));
+      const actions=element('td'), open=element('button','text-button','Open ↗'), remove=element('button','text-button','Delete');
+      open.addEventListener('click',async()=> {
+        if(polling) {$('history-message').textContent='Wait for the current scan to finish before opening another report.'; return;}
+        try {
+          const saved=await api('/api/history/'+item.id);
+          if(saved.kind==='ip') {scanId=item.id; setView('dashboard'); await poll();}
+          else if(saved.kind==='email') {renderEmail(saved.payload.report); setView('email');}
+          else {renderDomain(saved.payload); setView('domain');}
+        } catch(error) {$('history-message').textContent=error.message;}
+      });
+      remove.disabled=item.status==='running';
+      remove.addEventListener('click',async()=> {
+        if(!window.confirm('Delete this saved result permanently?')) return;
+        try {
+          await post('/api/history/'+item.id+'/delete');
+          if(scanId===item.id) {scanId=null;rows=[];render();localStorage.removeItem('ip-checker-last-scan-'+currentUser.id);}
+          await loadHistory();
+        } catch(error) {$('history-message').textContent=error.message;}
+      });
+      actions.append(open,remove);tr.append(actions);$('history-items').append(tr);
+    }
+    $('history-message').textContent=result.total+' saved result'+(result.total===1?'':'s')+(result.total?'':' · Run a lookup to save your first report.');
+    $('history-page').textContent='Page '+historyPage+' of '+Math.max(1,Math.ceil(result.total/50));
+    $('history-prev').disabled=historyPage<=1; $('history-next').disabled=historyPage*50>=result.total;
+  } catch(error) {$('history-message').textContent=error.message;}
+}
+$('history-form').addEventListener('submit',event=> {event.preventDefault();historyPage=1;loadHistory();});
+$('history-prev').addEventListener('click',()=> {historyPage--;loadHistory();});
+$('history-next').addEventListener('click',()=> {historyPage++;loadHistory();});
+async function loadAdmin() {
+  try {
+    const data=await api('/api/admin');$('mfa-policy-form').elements.required.checked=!!data.require_mfa; $('admin-mail-status').textContent=data.mail_configured?'Mail service configured.':'Mail service needs configuration in .mail_secrets.'; $('admin-users').replaceChildren();$('admin-audit').replaceChildren();
+    $('retention-form').elements.days.value=data.retention_days;
+    $('admin-counts').textContent=Object.entries(data.counts).map(([kind,n])=>kind.toUpperCase()+': '+n).join(' · ') || 'No saved results yet.';
+    for(const user of data.users) {
+      const tr=element('tr'), actions=element('td'), edit=element('button','text-button','Manage');
+      edit.addEventListener('click',()=> {
+        const form=$('edit-user-form');form.reset();const profile=data.profiles?.find(p=>p.user_id===user.id);form.elements.email.value=profile?.email || ''; form.elements.require_mfa.checked=!!profile?.required;form.elements.user_id.value=user.id;form.elements.role.value=user.role;form.elements.active.checked=!!user.active;
+        $('edit-user-title').textContent='Manage '+user.username;$('edit-user-message').textContent='';$('edit-user').showModal();
+      });
+      actions.append(edit);tr.append(element('td','',user.username),element('td','',user.role),element('td','',user.active?(user.must_change?'Password change required':'Active'):'Disabled'),actions);$('admin-users').append(tr);
+    }
+    for(const item of data.audit) {
+      const tr=element('tr');for(const value of [dateLabel(item.created),item.username || 'System / anonymous',item.action,item.target]) tr.append(element('td','',value));$('admin-audit').append(tr);
+    }
+  } catch(error) {$('admin-message').textContent=error.message;}
+}
+$('create-user-form').addEventListener('submit',async event=> {
+  event.preventDefault();const form=event.target, button=form.querySelector('button');button.disabled=true;
+  try {
+    await post('/api/admin/users',{username:form.elements.username.value,password:form.elements.password.value,role:form.elements.role.value,email:form.elements.email.value,require_mfa:form.elements.require_mfa.checked});
+    form.reset();$('admin-message').textContent='Account created. Share the temporary password privately; a change is required at first sign-in.';await loadAdmin();
+  } catch(error) {$('admin-message').textContent=error.message;} finally {button.disabled=false;}
+});
+$('edit-user-form').addEventListener('submit',async event=> {
+  event.preventDefault();const form=event.target, button=form.querySelector('button[type="submit"]');button.disabled=true;
+  try {
+    const data={role:form.elements.role.value,active:form.elements.active.checked,email:form.elements.email.value,require_mfa:form.elements.require_mfa.checked,reset_mfa:form.elements.reset_mfa.checked};
+    if(data.reset_mfa && !window.confirm('Reset all authenticators, passkeys and recovery codes for this account? Verify the user identity first.')) return;
+    if(form.elements.password.value) data.password=form.elements.password.value;
+    const target=Number(form.elements.user_id.value);await post('/api/admin/users/'+target,data);form.reset();$('edit-user').close();
+    if(target===currentUser.id) {window.location.replace('/login');return;}
+    $('admin-message').textContent='Account updated and existing sessions revoked.';await loadAdmin();
+  } catch(error) {$('edit-user-message').textContent=error.message;} finally {button.disabled=false;}
+});
+$('close-edit-user').addEventListener('click',()=> {$('edit-user-form').reset();$('edit-user').close();});
+$('edit-user').addEventListener('close',()=> $('edit-user-form').reset());
+$('retention-form').addEventListener('submit',async event=> {
+  event.preventDefault();if(!window.confirm('Apply this retention period to all users? Older results and activity will be permanently removed.')) return;
+  try {await post('/api/admin/retention',{days:Number(event.target.elements.days.value)});$('admin-message').textContent='Retention updated.';await loadAdmin();}
+  catch(error) {$('admin-message').textContent=error.message;}
+});
+
+async function loadSecurity() {
+  try {
+    const state=await api('/api/security/state');
+    $('security-summary').textContent=state.needs_mfa?'Verify your second factor to continue.':state.needs_setup?'Your administrator requires two-factor authentication. Enrol an authenticator or passkey to continue.':(state.totp_enabled || state.passkeys.length)?'Two-factor protection is enabled.':'Add an authenticator or passkey to protect your account.';
+    $('mfa-check').hidden=!state.needs_mfa;$('security-manage').hidden=state.needs_mfa || !!currentUser.must_change;
+    $('account-email').textContent=state.email?'Recovery email: '+state.email+' · '+(state.email_verified?'Verified':'Not verified'):'No recovery email. Ask your administrator to add one.';
+    $('verify-account-email').disabled=!state.email || !state.mail_configured || state.email_verified;
+    $('start-totp').hidden=state.totp_enabled;$('remove-totp').hidden=!state.totp_enabled;
+    $('add-passkey').disabled=!state.passkeys_available;$('verify-passkey').hidden=!state.passkeys.length || !state.passkeys_available;
+    $('new-recovery').hidden=!state.totp_enabled && !state.passkeys.length;
+    $('passkey-list').replaceChildren();
+    for(const key of state.passkeys) {
+      const line=element('p','',key.name+' · '+dateLabel(key.created)+' '), remove=element('button','text-button','Remove passkey');
+      remove.addEventListener('click',()=> securityAction(async()=> {
+        if(!window.confirm('Remove this passkey?')) return;
+        await post('/api/security/remove-factor',{password:$('security-password').value,passkey_id:key.id});await loadSecurity();
+      }));line.append(remove);$('passkey-list').append(line);
+    }
+    return state;
+  } catch(error) {$('security-message').textContent=error.message;return null;}
+}
+async function securityAction(action) {
+  $('security-message').textContent='';
+  try {await action();} catch(error) {$('security-message').textContent=error.message;}
+  finally {$('security-password').value='';}
+}
+function showRecovery(result) {
+  if(result.recovery_codes) {$('recovery-result').hidden=false;$('recovery-codes').textContent=result.recovery_codes.join('\n');}
+}
+$('mfa-form').addEventListener('submit',event=> {event.preventDefault();securityAction(async()=> {await post('/api/security/verify',{code:event.target.elements.code.value});event.target.reset();window.location.replace('/');});});
+$('start-totp').addEventListener('click',()=> securityAction(async()=> {
+  const result=await post('/api/security/totp-start',{password:$('security-password').value});$('totp-qr').src=result.qr;$('totp-secret').textContent=result.secret;$('totp-setup').hidden=false;
+}));
+$('totp-confirm').addEventListener('submit',event=> {event.preventDefault();securityAction(async()=> {
+  const result=await post('/api/security/totp-confirm',{code:event.target.elements.code.value});event.target.reset();$('totp-setup').hidden=true;$('totp-qr').removeAttribute('src');$('totp-secret').textContent='';showRecovery(result);await loadSecurity();$('security-message').textContent='Authenticator enabled. Save the recovery codes below, then return to Overview.';
+});});
+$('remove-totp').addEventListener('click',()=> securityAction(async()=> {if(!window.confirm('Remove authenticator protection?')) return;await post('/api/security/remove-factor',{password:$('security-password').value});await loadSecurity();}));
+$('new-recovery').addEventListener('click',()=> securityAction(async()=> {if(!window.confirm('Replace all existing recovery codes?')) return;showRecovery(await post('/api/security/recovery-codes',{password:$('security-password').value}));}));
+$('hide-recovery').addEventListener('click',()=> {$('recovery-result').hidden=true;$('recovery-codes').textContent='';window.location.replace('/');});
+$('verify-account-email').addEventListener('click',()=> securityAction(async()=> {await post('/api/security/verify-email',{password:$('security-password').value});$('security-message').textContent='Verification email queued. Open the link in your inbox.';}));
+function decodeCredential(value) {return Uint8Array.from(atob(value.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));}
+function encodeCredential(buffer) {return btoa(String.fromCharCode(...new Uint8Array(buffer))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+async function usePasskey(register) {
+  if(!window.PublicKeyCredential || !window.isSecureContext) throw new Error('Passkeys require HTTPS or localhost and a compatible browser.');
+  const start=await post('/api/security/'+(register?'passkey-register-options':'passkey-options'),{password:$('security-password').value});
+  const options=start.options;options.challenge=decodeCredential(options.challenge);
+  if(options.user) options.user.id=decodeCredential(options.user.id);
+  for(const name of ['allowCredentials','excludeCredentials']) if(options[name]) options[name]=options[name].map(item=>({...item,id:decodeCredential(item.id)}));
+  const credential=await navigator.credentials[register?'create':'get']({publicKey:options});
+  const response={clientDataJSON:encodeCredential(credential.response.clientDataJSON)};
+  if(register) {response.attestationObject=encodeCredential(credential.response.attestationObject);response.transports=credential.response.getTransports?.() || [];}
+  else {response.authenticatorData=encodeCredential(credential.response.authenticatorData);response.signature=encodeCredential(credential.response.signature);response.userHandle=credential.response.userHandle?encodeCredential(credential.response.userHandle):null;}
+  const result=await post('/api/security/'+(register?'passkey-register':'passkey-verify'),{challenge_id:start.challenge_id,name:'Passkey '+new Date().toLocaleDateString(),credential:{id:credential.id,rawId:encodeCredential(credential.rawId),type:credential.type,response,clientExtensionResults:credential.getClientExtensionResults()}});
+  if(register) {showRecovery(result);await loadSecurity();$('security-message').textContent='Passkey enrolled. Save any recovery codes below.';} else window.location.replace('/');
+}
+$('add-passkey').addEventListener('click',()=> securityAction(()=>usePasskey(true)));
+$('verify-passkey').addEventListener('click',()=> securityAction(()=>usePasskey(false)));
+window.addEventListener('pageshow',event=> {if(event.persisted) window.location.reload();});
+$('mfa-policy-form').addEventListener('submit',async event=> {
+  event.preventDefault();if(!window.confirm('Apply this two-factor requirement to every user immediately?')) return;
+  try {await post('/api/admin/mfa-policy',{required:event.target.elements.required.checked});$('admin-message').textContent='Authentication policy updated.';await loadAdmin();}
+  catch(error) {$('admin-message').textContent=error.message;}
 });

@@ -7,3 +7,18 @@ ip-addresses.txt
 *token*.txt
 __pycache__
 tests
+
+# Private database, sessions, history and backups
+.mail_secrets
+.mail_secrets.*
+*.key
+data/
+*.sqlite*
+*.db
+*.db-*
+
+.venv/
+backups/
+*.bak
+*.tar*
+*.zip

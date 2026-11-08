@@ -7,6 +7,8 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - ./.secrets:/app/.secrets:ro
+      - ./.mail_secrets:/app/.mail_secrets:ro
+      - ./data:/app/data
     read_only: true
     tmpfs:
       - /tmp:mode=1777,size=32m
@@ -14,3 +16,6 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    environment:
+      IP_CHECKER_ALLOWED_HOSTS: ${IP_CHECKER_ALLOWED_HOSTS:-}
+      IP_CHECKER_SECURE_COOKIE: ${IP_CHECKER_SECURE_COOKIE:-0}

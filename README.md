@@ -7,6 +7,8 @@ Spamhaus DQS, and optionally IPQualityScore (IPQS), with registered allocation C
 summary and writes a 40-column CSV with provider detections, diagnostics and review flags.
 The browser dashboard adds live progress, summary cards, text-file import,
 search, filters, sortable results, per-address detail views and CSV export.
+Local accounts, SQLite history, authenticator codes, passkeys and admin controls
+make it suitable for a shared workspace behind HTTPS.
 
 ## Themes
 
@@ -24,7 +26,7 @@ the existing Light preference remains available if you explicitly want it.
 
 ## Screenshots
 
-Full-page captures of every dashboard page, including populated risk dials.
+Full-page captures of the lookup and provider pages, including populated risk dials.
 These use illustrative documentation data, not live provider results or real credentials.
 Click an image to open it at full size. The scan-result popup scrolls internally.
 
@@ -70,9 +72,21 @@ git clone https://github.com/Deano86/ip-checker.git
 cd ip-checker
 umask 077
 cp .secrets.example .secrets
-chmod 600 .secrets
+cp .mail_secrets.example .mail_secrets
+chmod 600 .secrets .mail_secrets
+mkdir -p data
+chmod 700 data
 nano .secrets
+# Optional now: configure SMTP for recovery emails.
+nano .mail_secrets
 LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" docker compose up -d --build
+```
+
+Create your first administrator after the container starts. Password entry is hidden;
+there is no default account or public registration:
+
+```bash
+LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" docker compose exec ip-checker python3 dashboard.py --create-admin Deano86
 ```
 
 Open **http://localhost:8080** on the server. If it runs on a remote server,
@@ -96,12 +110,17 @@ contains your keys, keep it; do not copy the empty template over it.
 After installing the dependencies below and setting up `.secrets`, run:
 
 ```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python3 -m pip install -r requirements.txt
+python3 dashboard.py --create-admin Deano86
 python3 dashboard.py
 ```
 
-Open http://localhost:8080. The Python server itself has no third-party
-package dependencies. Bash, curl, jq, dig and Python 3 run the existing
-lookup engine behind the dashboard.
+Open http://localhost:8080. Install the authentication libraries in a virtual
+environment with `python3 -m pip install -r requirements.txt` before starting.
+Create the first administrator with `python3 dashboard.py --create-admin Deano86`.
+Bash, curl, jq, dig and Python 3 run the lookup engine behind the dashboard.
 
 ## Dashboard behaviour
 
@@ -111,29 +130,142 @@ lookup engine behind the dashboard.
 - Export all completed rows, even while a scan is running.
 - Check key presence and missing dependencies in the Providers screen.
 
-History stays in server memory for the latest 20 scans and clears on
-restart. Export reports you want to keep. Refreshing the page reconnects
-to the current scan or restores the last scan from this browser.
-No credentials are accepted, stored or displayed in the browser. Provider
-configuration indicates key presence, not successful authentication.
-Live scans still require valid keys and access to the provider APIs.
+Lookup history is saved in `data/ip-checker.sqlite3` and survives container rebuilds.
+Users see their own IP, email and domain reports; admins can search all users.
+Saved results reopen without querying providers or consuming lookup credits.
+History search covers addresses, domains, emails, ASNs, providers and report values.
+Results and activity records expire after **90 days** by default. Admins can set
+1–3650 days, and users can delete individual completed reports. Running scans
+save completed rows; a server restart marks an interrupted scan as stopped.
+An active IP scan remains limited to one across the workspace.
 
-The dashboard is intended for local use or access through an SSH tunnel.
-It has no built-in login. For a shared deployment, place it behind an
-authenticated HTTPS reverse proxy and set `IP_CHECKER_ALLOWED_HOSTS` to
-the exact dashboard hostname (comma-separated for multiple names).
-For Docker, add that variable to the service's `environment` in Compose.
-Do not expose the unauthenticated service directly to the Internet.
-The dashboard is self-hosted; it is not deployed to Sites hosting, which
-does not run this Bash/DNS lookup engine or mount a local `.secrets` file.
+Provider API keys stay in `.secrets`; the browser sees presence flags only.
+Login passwords are salted scrypt hashes. Session cookies are HttpOnly and
+SameSite=Strict, expire after eight hours or 30 minutes of inactivity, and are
+revoked by password changes, resets, account changes and disabling an account.
+State-changing authenticated requests require a session CSRF token.
 
-## Update or stop Docker
+## Accounts, two-factor authentication and passkeys
+
+Use **Administration** to create accounts, assign User or Administrator roles,
+set recovery emails, disable access and reset temporary passwords. New accounts
+must change their temporary password before using the workspace. At least one
+active administrator must remain. Account changes revoke that user's sessions.
+
+Use **Account → Sign-in security** to enrol an authenticator such as Google
+Authenticator, Microsoft Authenticator or Authy. Scan the QR code or enter the
+setup key, then confirm a six-digit code. Setup secrets are encrypted at rest.
+Ten single-use recovery codes are displayed once: save them in a password manager.
+Generating new recovery codes replaces the old ones.
+
+Passkeys use WebAuthn with required device verification (PIN or biometrics).
+In this version they are a **second factor after your password**. Add and remove
+passkeys in Account; choose **Use a passkey** at the second-factor prompt.
+Passkeys require a compatible browser and HTTPS, with localhost allowed for
+local access or SSH tunnels. Configure these non-secret values in `.secrets`:
 
 ```bash
-git pull
-LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" docker compose up -d --build
-docker compose down
+WEBAUTHN_RP_ID='checker.example.com'
+WEBAUTHN_ORIGIN='https://checker.example.com'
+# For the documented SSH tunnel, use localhost and http://localhost:8080 instead.
 ```
+
+The RP ID is the exact browser hostname; the origin includes the scheme and any
+non-default port. Keep this hostname stable: credentials are bound to it.
+
+Admins can require a second factor **per account** or **for everyone**. A verified
+passkey or authenticator satisfies the policy. Enrol your own factor before
+turning on the global requirement. Enforcement applies to existing sessions
+and every lookup, saved report and CSV endpoint. Users without a factor are
+limited to enrolment; users with a factor must verify it before accessing data.
+Users cannot remove their last factor while the policy requires one.
+
+Admins can reset lost factors after checking the user's identity. This removes
+authenticators, passkeys and recovery codes, revokes sessions, and preserves the
+requirement to enrol again. Server-terminal recovery is also available:
+
+```bash
+docker compose exec ip-checker python3 dashboard.py --reset-password Deano86
+docker compose exec ip-checker python3 dashboard.py --reset-mfa Deano86
+```
+
+The encryption key is generated in private `data/auth.key` on first startup.
+Optionally provide `AUTH_ENCRYPTION_KEY` in `.secrets` as a Fernet key instead.
+Keep the key with your private backups; losing or changing it makes existing
+TOTP setup secrets unreadable. Never commit it or your database.
+
+## Mail configuration and password resets
+
+Copy `.mail_secrets.example` to **`.mail_secrets`**, mode 600, and fill it in on
+the server. Compose mounts it read-only. Credentials are not editable or visible
+through the dashboard. Settings are read when a message is sent:
+
+```bash
+APP_URL='https://checker.example.com'
+SMTP_HOST='smtp.example.com'
+SMTP_PORT='587'
+SMTP_SECURITY='starttls' # or ssl with port 465
+SMTP_USER='your-smtp-username'
+SMTP_PASSWORD='your-smtp-password'
+SMTP_FROM='IP Checker <checker@example.com>'
+```
+
+`APP_URL` must be the exact public HTTPS origin, or `http://localhost:8080` for
+local access. Reset links use this configured address, never a request's Host
+header. TLS certificate verification is mandatory; plaintext SMTP is unsupported.
+Your mail provider may require an app password and an authorised sender domain.
+
+An admin assigns an account email. The user then selects **Verify account email**
+in Account and follows the emailed link. Only verified addresses receive password
+reset links. **Forgot password?** on the login page sends a generic response for
+all addresses. Reset links expire after 15 minutes, are stored as hashes, and
+work only once. Verification links expire after an hour. Password resets revoke
+sessions and preserve existing MFA protection. Login, code, link and recovery
+requests are rate limited. Administration shows mail configuration presence and
+`mail.sent` / `mail.failed` activity; actual SMTP delivery needs your own settings.
+
+## HTTPS, persistence and upgrades
+
+The default Compose binding stays **127.0.0.1:8080**. Use the SSH tunnel above,
+or place the dashboard behind an HTTPS reverse proxy for shared access. Set
+these environment variables on the server before starting Compose:
+
+```bash
+export IP_CHECKER_ALLOWED_HOSTS='checker.example.com'
+export IP_CHECKER_SECURE_COOKIE=1
+```
+
+Forward the original Host header from the proxy. Use Secure cookies with HTTPS;
+leave that flag at its default 0 only for the local HTTP/SSH-tunnel setup. Apply
+connection and request-rate limits at the proxy for a public-facing installation.
+The dashboard is self-hosted; Sites hosting does not run this Bash/DNS engine.
+
+Upgrade an existing checkout without replacing provider keys:
+
+```bash
+cd ~/ip-checker
+git pull
+umask 077
+[ -f .mail_secrets ] || cp .mail_secrets.example .mail_secrets
+mkdir -p data
+chmod 700 data
+chmod 600 .secrets .mail_secrets
+LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" docker compose up -d --build
+LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" docker compose exec ip-checker python3 dashboard.py --create-admin Deano86
+```
+
+Run `--create-admin` only once for a new username. Existing scans from versions
+that held history only in memory cannot be recovered after a restart. The new
+`data/` directory must be writable by the configured container UID, and kept
+private. Docker Desktop users should also create `data/` and both secrets files
+before starting Compose.
+
+Back up the complete `data/` directory plus both secrets files privately. Stop
+the container during a filesystem backup so the SQLite database, WAL and encryption
+key remain consistent, or use SQLite's online backup API. Restore with the same
+file owner and restrictive permissions. Backups contain personal lookup history
+and authentication data. Stop with `docker compose down`; bind-mounted data remains.
+Never put these backups in the public repository or Docker build context.
 
 ## CLI install (Ubuntu / Debian)
 
@@ -153,7 +285,7 @@ nano ip-addresses.txt
 bash ip-checker.sh
 ```
 
-The repository is private, so cloning requires GitHub access to it.
+The repository is public; no account passwords, database or working API keys are included.
 Use your own keys from your provider accounts, with access to the queried
 endpoints. No keys are included in this repository.
 

@@ -11,8 +11,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y jq dnsutils
       - name: Check Bash syntax
         run: bash -n ip-checker.sh
+      - name: Install authentication libraries
+        run: python3 -m pip install -r requirements.txt
       - name: Check dashboard JavaScript
         run: |
+          node --check web/login.js
           node --check web/app.js
           node --check web/signals.js
           node --check web/theme.js
@@ -21,9 +24,11 @@ jobs:
         run: python3 -m unittest discover -s tests -v
       - name: Build and smoke-test dashboard container
         run: |
-          chmod -R go-rwx dashboard.py provider_data.py email_lookup.py domain_lookup.py spamhaus_domain.py ip-checker.sh web
+          chmod -R go-rwx dashboard.py database.py provider_data.py email_lookup.py domain_lookup.py spamhaus_domain.py ip-checker.sh web
           docker build -t ip-checker:test .
-          docker run -d --user 12345:12345 --read-only --tmpfs /tmp:mode=1777,size=32m --name ip-checker-test -p 127.0.0.1:8080:8080 ip-checker:test
+          docker run -d --user 12345:12345 --read-only --tmpfs /tmp:mode=1777,size=32m --tmpfs /app/data:mode=0700,uid=12345,gid=12345 --name ip-checker-test -p 127.0.0.1:8080:8080 ip-checker:test
           trap 'docker logs ip-checker-test; docker rm -f ip-checker-test' EXIT
-          curl --fail --max-time 3 --retry 10 --retry-all-errors --retry-delay 1 http://127.0.0.1:8080/api/config | jq -e '.ready == false'
-          curl --fail http://127.0.0.1:8080/ -o /dev/null
+          curl --fail --max-time 3 --retry 10 --retry-all-errors --retry-delay 1 http://127.0.0.1:8080/api/health | jq -e '.ok == true'
+          curl --fail http://127.0.0.1:8080/login -o /dev/null
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/config)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/history)" = 401

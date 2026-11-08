@@ -13,3 +13,19 @@ tokenapi.txt
 ip2location-token.txt
 proxycheck-token.txt
 spamhaus-token.txt
+
+# Private database, sessions, history and backups
+.mail_secrets
+.mail_secrets.*
+!.mail_secrets.example
+*.key
+data/
+*.sqlite*
+*.db
+*.db-*
+
+.venv/
+backups/
+*.bak
+*.tar*
+*.zip
