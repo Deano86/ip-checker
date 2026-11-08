@@ -26,42 +26,63 @@ the existing Light preference remains available if you explicitly want it.
 
 ## Screenshots
 
-Full-page captures of the lookup and provider pages, including populated risk dials.
+Full-page captures of every dashboard page, including login, saved history,
+account security, administration and populated risk dials.
 These use illustrative documentation data, not live provider results or real credentials.
 Click an image to open it at full size. The scan-result popup scrolls internally.
 
+### Login and password recovery
+
+[![Login page](docs/screenshots/login.jpg)](docs/screenshots/login.jpg)
+
+[![Password reset request screen](docs/screenshots/password-reset.jpg)](docs/screenshots/password-reset.jpg)
+
+### Saved results
+
+[![Searchable saved IP, email and domain reports](docs/screenshots/saved-results.jpg)](docs/screenshots/saved-results.jpg)
+
+### Account security
+
+[![Account security with authenticator, passkey and recovery controls](docs/screenshots/account-security.jpg)](docs/screenshots/account-security.jpg)
+
+### Administration
+
+[![Full administration page with users, MFA policy, retention and activity](docs/screenshots/administration.jpg)](docs/screenshots/administration.jpg)
+
+[![User management dialog with roles and mandatory MFA settings](docs/screenshots/user-management.jpg)](docs/screenshots/user-management.jpg)
+
 ### Overview and risk gauges
 
-[![Slate overview with risk gauges and scan results](docs/screenshots/slate-overview.png)](docs/screenshots/slate-overview.png)
+[![Slate overview with risk gauges and scan results](docs/screenshots/slate-overview.jpg)](docs/screenshots/slate-overview.jpg)
 
 ### Scan-result popup
 
 Click a scan-result row to see IPQS and proxycheck risk dials, Spamhaus status,
 review flags, provider comparisons and the complete address report.
 
-[![Centred scan-result popup with risk dials](docs/screenshots/scan-result-popup.png)](docs/screenshots/scan-result-popup.png)
+[![Centred scan-result popup with risk dials](docs/screenshots/scan-result-popup.jpg)](docs/screenshots/scan-result-popup.jpg)
 
 ### Email lookup
 
-[![Full email lookup page with fraud risk dial](docs/screenshots/email-lookup.png)](docs/screenshots/email-lookup.png)
+[![Full email lookup page with fraud risk dial](docs/screenshots/email-lookup.jpg)](docs/screenshots/email-lookup.jpg)
 
 ### Domain lookup
 
-[![Full domain lookup page with registration, Spamhaus DBL and ZRD, and DNS records](docs/screenshots/domain-lookup.png)](docs/screenshots/domain-lookup.png)
+[![Full domain lookup page with registration, Spamhaus DBL and ZRD, and DNS records](docs/screenshots/domain-lookup.jpg)](docs/screenshots/domain-lookup.jpg)
 
 ### Providers
 
-[![Full provider configuration page](docs/screenshots/providers.png)](docs/screenshots/providers.png)
+[![Full provider configuration page](docs/screenshots/providers.jpg)](docs/screenshots/providers.jpg)
 
 ### Quick guide
 
-[![Full quick guide page](docs/screenshots/quick-guide.png)](docs/screenshots/quick-guide.png)
+[![Full quick guide page](docs/screenshots/quick-guide.jpg)](docs/screenshots/quick-guide.jpg)
 
 ### Other dark themes — full-page overviews
 
 | Graphite | Midnight | Forest |
 | :---: | :---: | :---: |
-| [![Graphite theme](docs/screenshots/graphite-overview.png)](docs/screenshots/graphite-overview.png) | [![Midnight theme](docs/screenshots/midnight-overview.png)](docs/screenshots/midnight-overview.png) | [![Forest theme](docs/screenshots/forest-overview.png)](docs/screenshots/forest-overview.png) |
+| [![Graphite theme](docs/screenshots/graphite-overview.jpg)](docs/screenshots/graphite-overview.jpg) | [![Midnight theme](docs/screenshots/midnight-overview.jpg)](docs/screenshots/midnight-overview.jpg) | [![Forest theme](docs/screenshots/forest-overview.jpg)](docs/screenshots/forest-overview.jpg) |
 
 ## Start the dashboard with Docker
 
