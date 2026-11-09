@@ -10,6 +10,69 @@ search, filters, sortable results, per-address detail views and CSV export.
 Local accounts, SQLite history, authenticator codes, passkeys and admin controls
 make it suitable for a shared workspace behind HTTPS.
 
+## Before first use: configuration checklist
+
+Copy the three templates to local configuration files. The working files stay
+ignored by Git; only the example templates are published. All hostnames and
+addresses below are placeholders, so put your own values in the local copies.
+
+```bash
+umask 077
+[ -f .env ] || cp .env.example .env
+[ -f .secrets ] || cp .secrets.example .secrets
+[ -f .mail_secrets ] || cp .mail_secrets.example .mail_secrets
+chmod 600 .env .secrets .mail_secrets
+```
+
+These commands preserve existing settings. If you already run the app, edit
+your working files rather than replacing them with templates.
+
+| File | What to edit before use | When needed |
+| --- | --- | --- |
+| [`.env.example`](.env.example) → `.env` | Allowed hostname, secure-cookie flag and trusted proxy IP/CIDRs. Optional Docker UID/GID. | Defaults work for local HTTP/SSH access. Change these for an HTTPS domain or reverse proxy. |
+| [`.secrets.example`](.secrets.example) → `.secrets` | IPINFO_KEY, IP2_KEY, PROXY_KEY and SPAMHAUS_KEY; optionally IPQS_KEY. | Four keys are required for IP scans; IPQS enables IPQS scoring and email lookups. |
+| `.secrets` | WEBAUTHN_RP_ID and WEBAUTHN_ORIGIN must match the browser hostname and exact origin. | Passkeys. Keep localhost defaults for the documented SSH tunnel; use your HTTPS domain for shared access. |
+| `.secrets` | AUTH_ENCRYPTION_KEY can stay empty. The app creates private `data/auth.key`. | No manual key creation required. Back up the generated key with the database. |
+| [`.mail_secrets.example`](.mail_secrets.example) → `.mail_secrets` | APP_URL plus SMTP_HOST, SMTP_PORT, SMTP_SECURITY, SMTP_USER, SMTP_PASSWORD and SMTP_FROM. | Email verification and password resets. Keep the file present even if SMTP values are blank. |
+| `data/` and administrator | Create the private data directory, run Docker with its owner's UID/GID, then create the first admin through the terminal command below. | All dashboard installations. No default login exists. |
+
+For **local access or an SSH tunnel**, the `.env.example` defaults can stay as
+they are: empty extra hosts, secure cookies 0, and no trusted proxies.
+
+For **an HTTPS domain behind a reverse proxy**, edit the active entries in
+`.env` (replace the hostname and proxy address with your own):
+
+```dotenv
+IP_CHECKER_ALLOWED_HOSTS=checker.example.com
+IP_CHECKER_SECURE_COOKIE=1
+IP_CHECKER_TRUSTED_PROXIES=192.0.2.10/32
+```
+
+Use a verified proxy address, not a visitor's IP. Leave trusted proxies empty
+if traffic reaches the application directly. Keep one active entry per setting.
+In `.secrets`, match the same hostname with
+`WEBAUTHN_RP_ID='checker.example.com'` and
+`WEBAUTHN_ORIGIN='https://checker.example.com'`. In `.mail_secrets`, use
+`APP_URL='https://checker.example.com'` for emailed links.
+Do not change an existing encryption key when changing domains.
+
+Point DNS and your HTTPS proxy at the server before using the domain. The
+default Docker binding is loopback-only: a proxy directly on the same host
+can reach `127.0.0.1:8080`. For a remote/containerised proxy, configure a
+reachable upstream and restrict access to the proxy. See
+[domain configuration](#set-or-change-your-domain) and
+[visitor IPs with NPM](#visitor-ips-with-nginx-proxy-manager).
+
+Compose reads `.env`; a directly launched Python process does not. For a
+non-Docker installation, export the IP_CHECKER_* values in the server process's
+environment. Exported shell values also override Compose's `.env`: clear
+stale overrides before applying edited files:
+
+```bash
+unset IP_CHECKER_ALLOWED_HOSTS IP_CHECKER_SECURE_COOKIE IP_CHECKER_TRUSTED_PROXIES
+LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" docker compose up -d --build --force-recreate
+```
+
 ## Themes
 
 Use the **Theme** menu in the top bar to switch instantly. Your browser
@@ -92,11 +155,13 @@ Install Docker Engine with Compose, then:
 git clone https://github.com/Deano86/ip-checker.git
 cd ip-checker
 umask 077
+cp .env.example .env
 cp .secrets.example .secrets
 cp .mail_secrets.example .mail_secrets
-chmod 600 .secrets .mail_secrets
+chmod 600 .env .secrets .mail_secrets
 mkdir -p data
 chmod 700 data
+nano .env
 nano .secrets
 # Optional now: configure SMTP for recovery emails.
 nano .mail_secrets
@@ -390,10 +455,11 @@ Upgrade an existing checkout without replacing provider keys:
 cd ~/ip-checker
 git pull
 umask 077
+[ -f .env ] || cp .env.example .env
 [ -f .mail_secrets ] || cp .mail_secrets.example .mail_secrets
 mkdir -p data
 chmod 700 data
-chmod 600 .secrets .mail_secrets
+chmod 600 .env .secrets .mail_secrets
 LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" docker compose up -d --build
 LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" docker compose exec ip-checker python3 dashboard.py --create-admin Deano86
 ```

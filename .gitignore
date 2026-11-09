@@ -3,6 +3,7 @@
 !.secrets.example
 .env
 .env.*
+!.env.example
 ip-addresses.txt
 ip-results*.csv
 *.csv
