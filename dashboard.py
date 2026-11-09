@@ -216,6 +216,47 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass  # Suppress raw request/error strings; log_request emits safe access events.
 
+    def forwarded_client_ip(self):
+        """Resolve X-Forwarded-For only through explicitly trusted proxy hops."""
+        peer = self.client_address[0]
+        networks = []
+        for value in os.environ.get('IP_CHECKER_TRUSTED_PROXIES', '').split(','):
+            try:
+                networks.append(ipaddress.ip_network(value.strip(), strict=False))
+            except ValueError:
+                continue
+
+        def trusted(address):
+            candidates = [address]
+            if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+                candidates.append(address.ipv4_mapped)
+            return any(candidate.version == network.version and candidate in network
+                       for candidate in candidates for network in networks)
+
+        try:
+            address = ipaddress.ip_address(peer)
+            if not trusted(address):
+                return peer
+            header = getattr(self, 'headers', {}).get('X-Forwarded-For', '')
+            if not header or len(header) > 2048:
+                return peer
+            values = header.split(',')
+            if len(values) > 32:
+                return peer
+            # Start at the actual socket peer, then walk right to left. The
+            # first untrusted hop is the client; earlier values may be spoofed.
+            for value in reversed(values):
+                if '%' in value:
+                    return peer
+                address = ipaddress.ip_address(value.strip())
+                if not trusted(address):
+                    break
+            if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+                return str(address.ipv4_mapped)
+            return str(address)
+        except (ValueError, TypeError):
+            return peer
+
     def log_request(self, code='-', size='-'):
         # Omit query strings, bodies, headers and resource identifiers. Unknown
         # paths use a fixed label so submitted secrets cannot become log entries.
@@ -242,7 +283,8 @@ class Handler(BaseHTTPRequestHandler):
         if method not in {'GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'}:
             method = 'OTHER'
         print(json.dumps({'event': 'http_access', 'time': self.log_date_time_string(),
-                          'peer': self.client_address[0], 'method': method,
+                          'peer': self.client_address[0], 'client_ip': self.forwarded_client_ip(),
+                          'method': method,
                           'path': route, 'status': code}), flush=True)
 
     def send(self, status, body, content_type='application/json; charset=utf-8', extra=None):

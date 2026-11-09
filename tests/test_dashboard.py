@@ -224,5 +224,36 @@ class AccessLogTests(unittest.TestCase):
         output.assert_not_called()
 
 
+
+class ForwardedAddressTests(unittest.TestCase):
+    def client(self, peer, forwarded=None, trusted=''):
+        handler = dashboard.Handler.__new__(dashboard.Handler)
+        handler.client_address = (peer, 12345)
+        handler.headers = {} if forwarded is None else {'X-Forwarded-For': forwarded}
+        with patch.dict(os.environ, IP_CHECKER_TRUSTED_PROXIES=trusted):
+            return handler.forwarded_client_ip()
+
+    def test_untrusted_peers_cannot_spoof_the_client(self):
+        self.assertEqual(self.client('192.0.2.10', '198.51.100.5'), '192.0.2.10')
+        self.assertEqual(self.client('192.0.2.10', '198.51.100.5', '203.0.113.10'), '192.0.2.10')
+        self.assertEqual(self.client('192.0.2.10', '198.51.100.5', 'not-a-network'), '192.0.2.10')
+
+    def test_trusted_nginx_proxy_manager_resolves_the_rightmost_client(self):
+        self.assertEqual(self.client('192.0.2.10', '198.51.100.5', '192.0.2.10/32'), '198.51.100.5')
+        self.assertEqual(self.client('192.0.2.10', '198.51.100.99, 198.51.100.5', '192.0.2.10/32'), '198.51.100.5')
+
+        self.assertEqual(self.client('192.0.2.10', 'garbage, 198.51.100.5', '192.0.2.10/32'), '198.51.100.5')
+
+    def test_multiple_proxy_hops_and_ipv6(self):
+        self.assertEqual(self.client('192.0.2.10', '198.51.100.5, 203.0.113.9', '192.0.2.10,203.0.113.0/24'), '198.51.100.5')
+        self.assertEqual(self.client('2001:db8::10', '2001:db8:1::7', '2001:db8::10/128'), '2001:db8:1::7')
+        self.assertEqual(self.client('::ffff:192.0.2.10', '198.51.100.5', '192.0.2.10'), '198.51.100.5')
+
+    def test_missing_malformed_and_oversized_headers_fail_closed(self):
+        for value in (None, '', 'unknown', '198.51.100.5, garbage', '198.51.100.5,', 'x'*2049, ','.join(['198.51.100.5']*33), 'fe80::1%scope'):
+            with self.subTest(value=value):
+                self.assertEqual(self.client('192.0.2.10', value, '192.0.2.10'), '192.0.2.10')
+
+
 if __name__ == '__main__':
     unittest.main()

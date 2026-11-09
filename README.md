@@ -337,9 +337,49 @@ docker compose logs -f --tail=50 ip-checker
 Press Ctrl+C to stop following. Each event includes `http_access`, the timestamp,
 network peer, method, route and HTTP status. Query strings, request bodies,
 headers, passwords, resource identifiers and unrecognised paths are excluded.
-A proxied request normally shows the proxy's address. Forwarded client-IP
-headers are not trusted by the application; use your proxy's access logs for
-visitor IPs. Login and account events remain available in
+Logs distinguish `peer` (the direct network connection) from `client_ip`
+(the resolved visitor address). Both are the same for a direct request.
+
+#### Visitor IPs with Nginx Proxy Manager
+
+Nginx Proxy Manager already sets `X-Forwarded-For` and appends its connection's
+remote address; see its [standard proxy configuration](https://github.com/NginxProxyManager/nginx-proxy-manager/blob/develop/docker/rootfs/etc/nginx/conf.d/include/proxy.conf).
+The app accepts this header only when the socket peer is explicitly trusted.
+
+Add the backend-facing IP of your NPM instance to your local `.env`. This example
+uses a reserved documentation address: replace it with the `peer` address shown
+in your logs **after confirming that it belongs to your proxy**:
+
+```dotenv
+IP_CHECKER_TRUSTED_PROXIES=192.0.2.10/32
+```
+
+Use exact addresses (`/32` for IPv4, `/128` for IPv6) where possible. Multiple
+proxy addresses or dedicated proxy networks can be comma-separated. Do not
+trust all addresses or a network that includes ordinary visitors. Leaving
+the setting empty keeps forwarded headers disabled.
+
+After pulling this update and preserving any local port-binding changes, apply:
+
+```bash
+unset IP_CHECKER_TRUSTED_PROXIES
+LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" docker compose up -d --build --force-recreate
+docker compose exec ip-checker printenv IP_CHECKER_TRUSTED_PROXIES
+docker compose logs -f --tail=50 ip-checker
+```
+
+Refresh through NPM and look at `client_ip`; `peer` continues to identify the
+proxy. A direct request with a forged header cannot change `client_ip`.
+The app walks the forwarded chain right to left and stops at the first
+untrusted hop, ignoring any earlier spoofed entries. Invalid entries in the trusted portion of the chain, or oversized
+headers, fall back to the direct peer. This setting affects access-log
+attribution; it does not grant host access or change authentication.
+
+If NPM is behind another proxy, trust each verified proxy hop needed to resolve
+the visitor. Otherwise the next untrusted proxy is correctly reported as the
+client. If the visitor still cannot be resolved, inspect NPM's own access logs
+and its generated proxy-host configuration; it must forward `X-Forwarded-For`.
+Avoid adding duplicate `proxy_set_header` directives to NPM's Advanced box. Login and account events remain available in
 **Administration → Recent account activity**.
 
 ### Upgrade an existing installation
