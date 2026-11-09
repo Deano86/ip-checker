@@ -98,6 +98,15 @@ class HTTPTests(unittest.TestCase):
         except HTTPError as response:
             return response.code, response.read(), response.headers
 
+    def test_each_page_refresh_emits_a_redacted_access_event(self):
+        with patch('builtins.print') as output:
+            self.assertEqual(self.request('/login?token=private-first')[0], 200)
+            self.assertEqual(self.request('/login?token=private-second')[0], 200)
+        events = [json.loads(call.args[0]) for call in output.call_args_list]
+        self.assertEqual(len(events), 2)
+        self.assertTrue(all(event['path'] == '/login' and event['status'] == 200 for event in events))
+        self.assertNotIn('private-', json.dumps(events))
+
     def test_home_and_secrets_are_not_served(self):
         status, body, headers = self.request('/')
         self.assertEqual(status, 200)
@@ -179,6 +188,40 @@ class HTTPTests(unittest.TestCase):
     def test_invalid_and_cross_origin_domain_requests_are_rejected(self):
         self.assertEqual(self.request('/api/domain', {'domain': '127.0.0.1'})[0], 400)
         self.assertEqual(self.request('/api/domain', {'domain': 'example.com'}, {'Origin': 'https://evil.example'})[0], 403)
+
+
+
+class AccessLogTests(unittest.TestCase):
+    def event(self, path, method='GET', status=200):
+        handler = dashboard.Handler.__new__(dashboard.Handler)
+        handler.path = path
+        handler.command = method
+        handler.client_address = ('127.0.0.1', 12345)
+        with patch('builtins.print') as output:
+            handler.log_request(status)
+        output.assert_called_once()
+        self.assertTrue(output.call_args.kwargs['flush'])
+        return json.loads(output.call_args.args[0])
+
+    def test_access_event_excludes_queries_and_request_secrets(self):
+        event = self.event('/api/history?q=private-email&token=private-token')
+        self.assertEqual(event['event'], 'http_access')
+        self.assertEqual(event['path'], '/api/history')
+        self.assertEqual(event['status'], 200)
+        self.assertNotIn('private-', json.dumps(event))
+
+    def test_identifiers_and_unknown_paths_are_redacted(self):
+        self.assertEqual(self.event('/api/scans/'+'a'*32+'/csv')['path'], '/api/scans/{id}/csv')
+        self.assertEqual(self.event('/api/admin/users/42')['path'], '/api/admin/users/{id}')
+        self.assertEqual(self.event('/private-token-here')['path'], '[unmatched]')
+        self.assertEqual(self.event('/private-token-here', 'private-method')['method'], 'OTHER')
+        self.assertEqual(self.event('/login', status=403)['status'], 403)
+
+    def test_raw_server_log_messages_remain_suppressed(self):
+        handler = dashboard.Handler.__new__(dashboard.Handler)
+        with patch('builtins.print') as output:
+            handler.log_message('private token %s', 'not-for-logs')
+        output.assert_not_called()
 
 
 if __name__ == '__main__':

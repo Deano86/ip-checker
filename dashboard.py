@@ -214,7 +214,36 @@ class Handler(BaseHTTPRequestHandler):
     server_version = 'IPChecker'
 
     def log_message(self, *args):
-        pass  # Do not log submitted addresses or configuration.
+        pass  # Suppress raw request/error strings; log_request emits safe access events.
+
+    def log_request(self, code='-', size='-'):
+        # Omit query strings, bodies, headers and resource identifiers. Unknown
+        # paths use a fixed label so submitted secrets cannot become log entries.
+        try:
+            path = urlsplit(getattr(self, 'path', '')).path
+        except ValueError:
+            path = ''
+        static = {'/', '/login', '/login.js', '/app.js', '/signals.js', '/theme.js', '/style.css'}
+        api = {'health', 'session', 'config', 'history', 'admin', 'scans', 'email',
+               'domain', 'login', 'logout', 'password', 'forgot-password',
+               'reset-password', 'verify-email', 'admin/users', 'admin/retention',
+               'admin/mfa-policy', 'security/state', 'security/verify',
+               'security/totp-start', 'security/totp-confirm', 'security/passkey-options',
+               'security/passkey-register-options', 'security/passkey-verify',
+               'security/passkey-register', 'security/remove-factor',
+               'security/recovery-codes', 'security/verify-email'}
+        route = re.sub(r'(?<=/)[a-f0-9]{32}(?=/|$)', '{id}', path)
+        route = re.sub(r'^/api/admin/users/[0-9]+$', '/api/admin/users/{id}', route)
+        dynamic = {'/api/scans/{id}', '/api/scans/{id}/csv', '/api/history/{id}',
+                   '/api/history/{id}/delete', '/api/admin/users/{id}'}
+        if path not in static and path.removeprefix('/api/') not in api and route not in dynamic:
+            route = '[unmatched]'
+        method = getattr(self, 'command', '')
+        if method not in {'GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'}:
+            method = 'OTHER'
+        print(json.dumps({'event': 'http_access', 'time': self.log_date_time_string(),
+                          'peer': self.client_address[0], 'method': method,
+                          'path': route, 'status': code}), flush=True)
 
     def send(self, status, body, content_type='application/json; charset=utf-8', extra=None):
         if isinstance(body, (dict, list)):

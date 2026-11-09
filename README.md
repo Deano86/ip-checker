@@ -248,18 +248,101 @@ requests are rate limited. Administration shows mail configuration presence and
 ## HTTPS, persistence and upgrades
 
 The default Compose binding stays **127.0.0.1:8080**. Use the SSH tunnel above,
-or place the dashboard behind an HTTPS reverse proxy for shared access. Set
-these environment variables on the server before starting Compose:
+or place the dashboard behind an HTTPS reverse proxy for shared access.
+The dashboard is self-hosted; Sites hosting does not run this Bash/DNS engine.
+
+### Set or change your domain
+
+The examples below use the reserved placeholder **checker.example.com**. Replace
+it with your own hostname locally. Keep domain-specific settings in the ignored
+configuration files; never put your working credentials in tracked source files.
+
+1. Point the hostname's DNS at your reverse proxy and configure a valid HTTPS
+   certificate. Forward requests to the dashboard on port 8080 and preserve the
+   original Host header. A proxy running directly on the same server can use
+   `http://127.0.0.1:8080`; keep the default loopback Docker port binding.
+   A proxy on another machine or in a separate container needs a reachable
+   upstream address. Restrict upstream access to that proxy instead of exposing
+   port 8080 publicly.
+2. Edit `.secrets`, keeping your existing provider keys and encryption key:
+
+   ```bash
+   WEBAUTHN_RP_ID='checker.example.com'
+   WEBAUTHN_ORIGIN='https://checker.example.com'
+   ```
+
+   The RP ID is a hostname only. The origin includes HTTPS and a port if using a
+   non-default port. Use the address users will actually open in their browser.
+3. Edit `.mail_secrets`, keeping your existing SMTP settings:
+
+   ```bash
+   APP_URL='https://checker.example.com'
+   ```
+
+   This sets the origin used in password reset and verification links.
+4. Create or edit `.env` alongside `compose.yaml`, preserving unrelated settings:
+
+   ```dotenv
+   IP_CHECKER_ALLOWED_HOSTS=checker.example.com
+   IP_CHECKER_SECURE_COOKIE=1
+   ```
+
+   Allowed hosts contain hostnames only, separated by commas if needed: no
+   scheme, path or port. Secure cookies require HTTPS. Leave the flag at 0 only
+   for the local HTTP/SSH-tunnel setup.
+5. Apply the configuration from the checkout directory:
+
+   ```bash
+   chmod 600 .env .secrets .mail_secrets
+   unset IP_CHECKER_ALLOWED_HOSTS IP_CHECKER_SECURE_COOKIE
+   LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" docker compose up -d --force-recreate
+   docker compose exec ip-checker printenv IP_CHECKER_ALLOWED_HOSTS IP_CHECKER_SECURE_COOKIE
+   ```
+
+   The last command should print the configured hostname and `1`. Existing
+   exported shell variables override `.env`; the `unset` step clears stale
+   examples. See [Docker's interpolation precedence documentation](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/).
+   Changing Python files also requires `--build`, as shown in the upgrade
+   instructions below.
+6. Open the new HTTPS URL and sign in. Existing passkeys are bound to the old
+   hostname and must be enrolled again at the new domain. Authenticator-app
+   codes and the database encryption key do not need changing. If necessary,
+   use an authenticator or recovery code to access Account and enrol a new
+   passkey; server-terminal recovery is documented above.
+
+If the page returns **Host or origin is not allowed**, verify the environment
+inside the running container using step 5, then check that the proxy preserves
+the browser-facing Host header. Test the application directly on the server:
 
 ```bash
-export IP_CHECKER_ALLOWED_HOSTS='checker.example.com'
-export IP_CHECKER_SECURE_COOKIE=1
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -H 'Host: checker.example.com' http://127.0.0.1:8080/login
 ```
 
-Forward the original Host header from the proxy. Use Secure cookies with HTTPS;
-leave that flag at its default 0 only for the local HTTP/SSH-tunnel setup. Apply
-connection and request-rate limits at the proxy for a public-facing installation.
-The dashboard is self-hosted; Sites hosting does not run this Bash/DNS engine.
+Expect `200`. This checks HTTP access without submitting a password. The Python
+server does not implement HEAD requests, so use the GET request above rather
+than `curl -I`. Apply connection and request-rate limits at the reverse proxy
+for a public-facing installation.
+
+### Access logs
+
+HTTP access events are written to standard output as one JSON line per response.
+They appear immediately when refreshing a page:
+
+```bash
+docker compose logs --tail=100 ip-checker
+docker compose logs -f --tail=50 ip-checker
+```
+
+Press Ctrl+C to stop following. Each event includes `http_access`, the timestamp,
+network peer, method, route and HTTP status. Query strings, request bodies,
+headers, passwords, resource identifiers and unrecognised paths are excluded.
+A proxied request normally shows the proxy's address. Forwarded client-IP
+headers are not trusted by the application; use your proxy's access logs for
+visitor IPs. Login and account events remain available in
+**Administration → Recent account activity**.
+
+### Upgrade an existing installation
 
 Upgrade an existing checkout without replacing provider keys:
 
