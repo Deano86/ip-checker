@@ -1,6 +1,6 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
-const {score,comparisons}=require('../web/signals.js');
+const {score,comparisons,riskBand,domainSummary}=require('../web/signals.js');
 test('unavailable and malformed scores never become zero',()=> {
   for(const value of [null,undefined,'',' ','UNKNOWN','N/A',false,-1,101,'bad']) assert.equal(score(value),null);
   assert.equal(score('0'),0); assert.equal(score('75'),75); assert.equal(score('33.5'),33.5);
@@ -23,4 +23,19 @@ test('missing anonymity signals stay unknown',()=> {
 test('connection type compares hosting without treating missing fields as residential',()=> {
   assert.equal(comparisons({'PC Hosting':'YES','IPQS Connection Type':'Residential'})[3].disagrees,true);
   assert.equal(comparisons({'PC Hosting':'YES','IPQS Connection Type':'UNKNOWN'})[3].comparable,false);
+});
+
+test('score bands follow each provider model and invalid inputs remain unknown',()=> {
+  assert.equal(riskBand('ipqs',74),'Lower');assert.equal(riskBand('ipqs',75),'Elevated');assert.equal(riskBand('ipqs',90),'High');
+  assert.equal(riskBand('pc',25),'Lower');assert.equal(riskBand('pc',26),'Elevated');assert.equal(riskBand('pc',76),'High');
+  assert.equal(riskBand('pc','UNKNOWN'),null);
+  for(const value of [[75],{},'0x64','Infinity']) assert.equal(score(value),null);
+  assert.equal(score('1e2'),100);
+});
+
+test('domain reputation distinguishes listing, recent observation and incomplete data',()=> {
+  assert.equal(domainSummary([{list:'DBL',status:'OK',listed:'YES'}]).tone,'threat');
+  assert.equal(domainSummary([{list:'ZRD',status:'OK',listed:'YES'}]).label,'Recently observed domain');
+  assert.equal(domainSummary([{list:'DBL',status:'OK',listed:'NO'},{list:'ZRD',status:'TIMEOUT',listed:'UNKNOWN'}]).tone,'unknown');
+  assert.equal(domainSummary([{list:'DBL',status:'OK',listed:'NO'},{list:'ZRD',status:'OK',listed:'NO'}]).tone,'no');
 });

@@ -2,6 +2,7 @@
 import json
 import re
 import socket
+from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -39,7 +40,7 @@ def flag(value):
 
 
 def normalise(email, data):
-    if not isinstance(data, dict) or data.get('success') is False or data.get('error'):
+    if not isinstance(data, dict) or data.get('success') is not True or data.get('error'):
         raise LookupError('IPQS rejected the email lookup. Check email API access, key and available credits in your account.')
     if not any(field in data for field in ('valid', 'disposable', 'fraud_score', 'deliverability')):
         raise LookupError('IPQS returned no usable email verification fields.')
@@ -58,6 +59,27 @@ def normalise(email, data):
                        'Suggested Domain': 'suggested_domain'}.items():
         value = data.get(key)
         report[label] = str(value)[:200] if isinstance(value, (str, int, float)) and not isinstance(value, bool) and str(value).strip() else 'UNKNOWN'
+    if report['Deliverability'].lower() not in ('high', 'medium', 'low'):
+        report['Deliverability'] = 'UNKNOWN'
+    missing = [key for key in ('Valid', 'Disposable', 'Fraud Score', 'Deliverability') if report[key] == 'UNKNOWN']
+    report['Lookup Health'] = 'PARTIAL' if missing or data.get('timed_out') is True else 'OK'
+    report['Lookup Notes'] = ('Unavailable fields: '+', '.join(missing)+'. ' if missing else '') + ('Mailbox verification timed out. ' if data.get('timed_out') is True else '')
+    report['Lookup Notes'] = report['Lookup Notes'].strip() or 'Core email checks returned usable data.'
+    if report['Catch All'] == 'YES':
+        report['Lookup Notes'] += ' Catch-all server: an individual mailbox cannot be confirmed.'
+    findings = []
+    for key, label in [('Disposable','Disposable email indicator'),('Recent Abuse','Recent abuse reported'),('Honeypot','Honeypot indicator'),('Frequent Complainer','Frequent complainer indicator')]:
+        if report[key] == 'YES':
+            findings.append(label)
+    if report['Valid'] == 'NO':
+        findings.append('Provider reports an invalid email')
+    if score != 'UNKNOWN' and float(score) >= 75:
+        findings.append('High IPQS email fraud score' if float(score) >= 90 else 'Elevated IPQS email fraud score')
+    if report['Spam Trap Score'].lower() in ('medium', 'high'):
+        findings.append(report['Spam Trap Score'].title()+' spam-trap indicator')
+    report['Review'] = '; '.join(findings) if findings else 'No positive email-risk indicators among returned fields'
+    report['Score Source'] = 'IPQS email fraud model (0–100); not a delivery probability'
+    report['Checked At'] = datetime.now(timezone.utc).isoformat()
     return report
 
 

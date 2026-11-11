@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 import email_lookup
 import domain_lookup
 from database import Database, token_hash
+from provider_data import REPORT_COLUMNS, LEGACY_COLUMNS
 from http.cookies import SimpleCookie, CookieError
 from urllib.parse import parse_qs
 import hmac
@@ -152,7 +153,7 @@ class ScanStore:
                         contents = output_file.read_text(encoding='utf-8')
                         contents = contents[:contents.rfind('\n') + 1]
                         rows = list(csv.DictReader(io.StringIO(contents)))
-                        rows = [row for row in rows if len(row) == 40 and None not in row and all(v is not None for v in row.values())]
+                        rows = [row for row in rows if set(row) in (set(REPORT_COLUMNS), set(LEGACY_COLUMNS)) and None not in row and all(v is not None for v in row.values())]
                         rows = [{k: ('UNKNOWN' if v is None or not str(v).strip() else v) for k, v in row.items()} for row in rows]
                         with self.lock:
                             self.scans[scan_id]['rows'] = rows
@@ -256,7 +257,6 @@ class Handler(BaseHTTPRequestHandler):
             return str(address)
         except (ValueError, TypeError):
             return peer
-
     def log_request(self, code='-', size='-'):
         # Omit query strings, bodies, headers and resource identifiers. Unknown
         # paths use a fixed label so submitted secrets cannot become log entries.

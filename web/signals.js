@@ -2,7 +2,8 @@
   'use strict';
   const flag = value => value==='YES' || value==='NO' ? value : 'UNKNOWN';
   function score(value) {
-    if (value == null || typeof value==='boolean' || String(value).trim()==='') return null;
+    if (!['number','string'].includes(typeof value) || String(value).trim()==='') return null;
+    if(typeof value==='string' && !/^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value.trim())) return null;
     const result=Number(value);
     return Number.isFinite(result) && result>=0 && result<=100 ? result : null;
   }
@@ -21,7 +22,19 @@
       return {...item,disagrees:known.includes('YES')&&known.includes('NO'),comparable:known.length>=2};
     });
   }
-  const api={flag,score,comparisons};
+  function riskBand(provider,value) {
+    const number=score(value);if(number===null) return null;
+    if(provider==='pc') return number>75?'High':number>25?'Elevated':'Lower';
+    return number>=90?'High':number>=75?'Elevated':'Lower';
+  }
+  function domainSummary(checks) {
+    checks=Array.isArray(checks)?checks:[];
+    if(checks.some(check=>check.list==='DBL' && check.status==='OK' && check.listed==='YES')) return {label:'Listed in Spamhaus DBL',tone:'threat',note:'Review the returned domain-reputation categories below.'};
+    if(checks.some(check=>check.list==='ZRD' && check.status==='OK' && check.listed==='YES')) return {label:'Recently observed domain',tone:'yes',note:'ZRD is an age signal, not a malware verdict.'};
+    if(['DBL','ZRD'].every(list=>checks.some(check=>check.list===list && check.status==='OK' && check.listed==='NO'))) return {label:'No domain listing returned',tone:'no',note:'Both domain checks completed. No listing does not guarantee safety.'};
+    return {label:'Domain reputation incomplete',tone:'unknown',note:'One or more reputation checks did not return usable data.'};
+  }
+  const api={flag,score,comparisons,riskBand,domainSummary};
   if (typeof module!=='undefined' && module.exports) module.exports=api;
   else root.IPSignals=api;
 })(globalThis);

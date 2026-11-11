@@ -144,7 +144,7 @@ function openDetails(row) {
   riskIP=row['IP Address']; renderGauges();
   $('detail-ip').textContent = row['IP Address'];
   const dl=element('dl');
-  if (row['Lookup Health']==='PARTIAL') dl.append(element('p','error','Some provider data is unavailable. See provider statuses below; positive detections still apply.'));
+  if (row['Lookup Health']==='PARTIAL') dl.append(element('p','report-notice','Some provider data is unavailable. See provider statuses below; positive detections still apply.'));
   Object.entries(row).forEach(([key,value])=> { const line=element('div','detail-row'); line.append(element('dt','',key),element('dd','',value == null || String(value).trim()==='' ? 'UNKNOWN' : value)); dl.append(line); });
   const comparison=element('section','comparison-panel');
   comparison.append(element('h3','','Provider comparison'),element('p','','Providers use different definitions and datasets. Unknown values are not negative detections.'));
@@ -178,18 +178,33 @@ function openDetails(row) {
   state.append(element('p','','Review: '+(row.Review || 'UNKNOWN').replaceAll('_',' ').replaceAll('+',' · ')));
   if(row['Lookup Health']==='PARTIAL') state.append(element('span','badge unknown','Partial provider data'));
   gauges.append(state); risk.append(gauges,element('p','risk-footnote','Higher scores mean greater risk within each provider’s model. Scores and listing status are separate signals; a low score does not cancel a threat listing.'));
-  $('detail-content').replaceChildren(risk,comparison,dl);
+  const network=element('section','network-summary');
+  network.append(element('h3','','Network & location'));
+  const facts=element('div','network-facts');
+  const known=value=>value && !['UNKNOWN','NOT_PUBLISHED','N/A'].includes(String(value));
+  const location=[row.City,row.Region,[row.Country,row['Country Code']].find(known)].filter(known).join(', ') || 'Not returned';
+  for(const [title,value,note] of [
+    ['Network owner',[row.ASN,row.Provider].filter(known).join(' · ') || 'Unknown','Source: '+(row['Provider Source'] || 'Unknown')],
+    ['Approximate location',location,'Source: '+(row['Geolocation Source'] || 'Not present in this saved report')],
+    ['Registered allocation',[row.CIDR,row['Network Name']].filter(known).join(' · ') || 'Unknown','RDAP: '+(row['RDAP Status'] || 'Not present in this saved report')],
+    ['Report completeness',row['Lookup Health'] || 'UNKNOWN','Scores and threat/listing results remain separate signals.']
+  ]) {const card=element('article');card.append(element('h4','',title),element('strong','',value),element('small','',note));facts.append(card);}
+  network.append(facts,element('p','risk-footnote','IP geolocation is approximate and does not identify a person or a precise address. Registered allocation country may differ from geolocation.'));
+  $('detail-content').replaceChildren(risk,network,comparison,dl);
   setDial('detail-ipqs',row['IPQS Fraud Score'],row['IPQS Status']==='NOT_CONFIGURED');
   setDial('detail-pc',row['PC Risk']);
   $('details').showModal(); $('detail-content').scrollTop=0;
 }
 function setDial(name,value,notConfigured=false) {
   const dial=$('dial-'+name), score=IPSignals.score(value);
+  const provider=name.includes('pc')?'pc':'ipqs';
+  dial.style.setProperty('--low-band-angle',provider==='pc'?'67.5deg':'202.5deg');
+  dial.style.setProperty('--high-band-angle',provider==='pc'?'202.5deg':'243deg');
   dial.setAttribute('role',score===null?'group':'meter');
   dial.classList.toggle('unknown',score===null);
   dial.style.setProperty('--needle-angle',(score===null?0:-135+score*2.7)+'deg');
   $('dial-'+name+'-value').textContent=score===null?'—':String(score);
-  $('dial-'+name+'-caption').textContent=score===null?(notConfigured?'Not enabled':'Unknown'):'out of 100';
+  $('dial-'+name+'-caption').textContent=score===null?(notConfigured?'Not enabled':'Unknown'):'out of 100 · '+IPSignals.riskBand(provider,score);
   dial.setAttribute('aria-valuetext',score===null?'Unknown':score+' out of 100');
   if(score===null) dial.removeAttribute('aria-valuenow'); else dial.setAttribute('aria-valuenow',score);
 }
@@ -239,12 +254,15 @@ startSession();
 $('theme-select').value=document.documentElement.dataset.palette || 'slate';
 $('theme-select').addEventListener('change',event=>window.IPCheckerTheme.apply(event.target.value));
 let emailResult=null;
-function renderEmail(report) {
+function renderEmail(report,saved=false) {
   emailResult=report;
   $('email-report').hidden=false;
   $('email-result-address').textContent=report['Email Address'];
-  $('email-result-caption').textContent='IPQS email reputation · Fresh lookup';
+  $('email-result-caption').textContent='IPQS email reputation · '+(saved?'Saved report':'Fresh lookup')+(report['Checked At']?' · '+new Date(report['Checked At']).toLocaleString():'');
   setDial('email',report['Fraud Score']);
+  $('email-partial').hidden=report['Lookup Health']!=='PARTIAL' && report['Catch All']!=='YES';
+  $('email-partial').textContent=report['Lookup Notes'] || 'Some email checks are unavailable. Unknown fields are not negative results.';
+  $('email-review').textContent=report.Review || 'Review the returned fields; a missing value is not a negative detection.';
   $('email-highlights').replaceChildren();
   for(const key of ['Valid','Disposable','Deliverability','Recent Abuse']) {
     const box=element('div','email-highlight'); box.append(element('span','',key),element('strong','',report[key] || 'UNKNOWN')); $('email-highlights').append(box);
@@ -276,6 +294,10 @@ function renderDomain(result) {
   $('domain-report').hidden=false;
   $('domain-result-name').textContent=result.report.Domain;
   $('domain-partial').hidden=result.health!=='PARTIAL';
+  const summary=IPSignals.domainSummary(result.reputation);
+  const badgeNode=element('span','badge '+summary.tone,summary.label);
+  $('domain-summary').replaceChildren(badgeNode,element('p','',summary.note+' Domain reputation is a listing result, not a numerical fraud score.'));
+  $('domain-notes').replaceChildren(...(result.notes || []).map(note=>element('li','',note)));
   $('domain-reputation').replaceChildren();
   for(const check of result.reputation || []) {
     const card=element('article','domain-reputation-card');
@@ -367,7 +389,7 @@ async function loadHistory() {
         try {
           const saved=await api('/api/history/'+item.id);
           if(saved.kind==='ip') {scanId=item.id; setView('dashboard'); await poll();}
-          else if(saved.kind==='email') {renderEmail(saved.payload.report); setView('email');}
+          else if(saved.kind==='email') {renderEmail(saved.payload.report,true); setView('email');}
           else {renderDomain(saved.payload); setView('domain');}
         } catch(error) {$('history-message').textContent=error.message;}
       });

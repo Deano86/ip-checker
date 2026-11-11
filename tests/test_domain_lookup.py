@@ -62,5 +62,38 @@ class DomainTests(unittest.TestCase):
                 handler.redirect_request(None, None, 302, '', {}, 'https://localhost/')
 
 
+class RegistrationScopeTests(unittest.TestCase):
+    def test_public_suffix_rules_preserve_multi_label_and_private_suffixes(self):
+        self.assertEqual(domain_lookup.registration_target('vpn.example.co.uk'), ('example.co.uk','co.uk'))
+        self.assertEqual(domain_lookup.registration_target('a.b.example.com'), ('example.com','com'))
+        self.assertEqual(domain_lookup.registration_target('a.blogspot.com'), ('blogspot.com','com'))
+
+    def test_subdomain_rdap_uses_parent_but_dns_and_lists_keep_subdomain(self):
+        calls = []
+        def fake_get(url, accept):
+            calls.append(url)
+            if 'rdap.org' in url:
+                return {'ldhName':'EXAMPLE.CO.UK'}, 'OK'
+            return {'Status':0}, 'OK'
+        def reputation(domain, key, zone):
+            self.assertEqual(domain, 'vpn.example.co.uk')
+            return {'list':zone.upper(),'status':'OK','listed':'NO','categories':[],'codes':[]}
+        with patch.object(domain_lookup, 'get_json', side_effect=fake_get), patch.object(domain_lookup.spamhaus_domain, 'lookup', side_effect=reputation):
+            result = domain_lookup.lookup('vpn.example.co.uk', 'test')
+        self.assertIn('https://rdap.org/domain/example.co.uk', calls)
+        self.assertNotIn('https://rdap.org/domain/vpn.example.co.uk', calls)
+        self.assertTrue(any('name=vpn.example.co.uk' in url for url in calls))
+        self.assertEqual(result['report']['Domain'], 'vpn.example.co.uk')
+        self.assertEqual(result['report']['RDAP Query Domain'], 'example.co.uk')
+        self.assertEqual(result['health'], 'OK')
+        self.assertTrue(result['notes'])
+
+    def test_wrong_registration_record_is_not_accepted(self):
+        with patch.object(domain_lookup, 'get_json', return_value=({'ldhName':'different.com'}, 'OK')):
+            data, status = domain_lookup.registration_query('example.com')
+        self.assertEqual(status, 'INVALID_REGISTRATION_RESPONSE')
+        self.assertEqual(data, {})
+
+
 if __name__ == '__main__':
     unittest.main()

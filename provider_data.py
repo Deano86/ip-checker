@@ -2,6 +2,13 @@
 import json
 import re
 import sys
+import csv
+import ipaddress
+import math
+
+LEGACY_COLUMNS = ['IP Address','CIDR','ASN','Provider','IP2 Proxy','PC Anonymous','PC VPN','PC Proxy','PC Tor','PC Hosting','PC Network Type','PC Risk','PC Confidence','Spamhaus Lists','Spamhaus Status','Anonymisation','Hosting','Threat Listing','Review','IPQS Status','IPQS Fraud Score','IPQS Proxy','IPQS VPN','IPQS Tor','IPQS Recent Abuse','IPQS Bot','IPinfo Status','IP2Location Status','Proxycheck Status','IPQS Detail','ASN Source','Provider Source','Lookup Health','IPQS Active VPN','IPQS Active Tor','IPQS Connection Type','IPQS Abuse Frequency','IPQS Verified Crawler','IPQS Hostname','IPQS Country']
+EXTRA_COLUMNS = ['Country Code','Country','Region','City','Timezone','Latitude','Longitude','Geolocation Source','RDAP Status','Network Name','Network Handle','Network Start','Network End','Network Country','Network Registered','Network Updated','Network Status','RDAP Source']
+REPORT_COLUMNS = LEGACY_COLUMNS + EXTRA_COLUMNS
 
 
 def text(value):
@@ -15,6 +22,8 @@ def status(data, provider):
     if not isinstance(data, dict):
         return 'INVALID_RESPONSE'
     code = data.get('_http_status', 200)
+    if type(code) is not int:
+        return 'INVALID_RESPONSE'
     if code == 401:
         return 'AUTH_ERROR'
     if code == 403:
@@ -45,7 +54,93 @@ def status(data, provider):
     return 'OK'
 
 
-def enrich(info, lite, ip2, pc, ipqs, ip):
+def number(value, minimum, maximum):
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return 'UNKNOWN'
+    try:
+        result = float(value)
+        return str(value).strip() if math.isfinite(result) and minimum <= result <= maximum else 'UNKNOWN'
+    except ValueError:
+        return 'UNKNOWN'
+
+
+def geolocation(info, ip2, ipqs):
+    # Keep the location bundle from one source; do not combine one provider's
+    # city with another provider's coordinates.
+    result = {key: 'UNKNOWN' for key in EXTRA_COLUMNS[:8]}
+    for data, name, fields in (
+        (ip2, 'IP2Location', ('country_code','country_name','region_name','city_name','time_zone','latitude','longitude')),
+        (info, 'IPinfo', ('country',None,'region','city','timezone',None,None)),
+        (ipqs, 'IPQS', ('country_code',None,'region','city','timezone','latitude','longitude')),
+    ):
+        if not isinstance(data, dict) or status(data, name) not in (('OK', 'MISSING_NETWORK_FIELDS') if name == 'IPinfo' else ('OK',)):
+            continue
+        if not any(text(data.get(key)) for key in fields[:4] if key):
+            continue
+        for label, key in zip(EXTRA_COLUMNS[:7], fields):
+            value = data.get(key) if key else None
+            result[label] = number(value, -90 if label == 'Latitude' else -180, 90 if label == 'Latitude' else 180) if label in ('Latitude','Longitude') else text(value) or 'UNKNOWN'
+        if name == 'IPinfo' and isinstance(data.get('loc'), str):
+            coords = data['loc'].split(',')
+            if len(coords) == 2:
+                result['Latitude'] = number(coords[0], -90, 90)
+                result['Longitude'] = number(coords[1], -180, 180)
+        result['Geolocation Source'] = name
+        return result
+    return result
+
+
+def rdap_fields(data, ip):
+    result = {key: 'UNKNOWN' for key in EXTRA_COLUMNS[8:]}
+    result['CIDR'] = 'UNKNOWN'
+    if not isinstance(data, dict) or data.get('errorCode') or status(data, 'RDAP') != 'OK':
+        result['RDAP Status'] = 'UNAVAILABLE'
+        return result
+    try:
+        address = ipaddress.ip_address(ip)
+        matches = []
+        for item in data.get('cidr0_cidrs', []) if isinstance(data.get('cidr0_cidrs'), list) else []:
+            if not isinstance(item, dict) or 'v4prefix' not in item or type(item.get('length')) is not int:
+                continue
+            try:
+                net = ipaddress.ip_network(str(item['v4prefix'])+'/'+str(item['length']), strict=False)
+                if address in net:
+                    matches.append(net)
+            except (ValueError, TypeError):
+                continue
+        start = end = None
+        if data.get('startAddress') or data.get('endAddress'):
+            start = ipaddress.ip_address(data.get('startAddress'))
+            end = ipaddress.ip_address(data.get('endAddress'))
+            if not start <= address <= end:
+                raise ValueError()
+            matches = [net for net in matches if start <= net.network_address and net.broadcast_address <= end]
+            if not matches:
+                matches = [net for net in ipaddress.summarize_address_range(start, end) if address in net]
+        if not matches:
+            raise ValueError()
+        result['CIDR'] = str(max(matches, key=lambda net: net.prefixlen))
+        result['Network Start'] = str(start) if start else 'UNKNOWN'
+        result['Network End'] = str(end) if end else 'UNKNOWN'
+    except (ValueError, TypeError):
+        result['RDAP Status'] = 'INVALID_NETWORK_RESPONSE'
+        return result
+    for label, key in [('Network Name','name'),('Network Handle','handle'),('Network Country','country')]:
+        result[label] = text(data.get(key)) or 'UNKNOWN'
+    events = data.get('events', [])
+    for event in events if isinstance(events, list) else []:
+        if isinstance(event, dict):
+            label = {'registration':'Network Registered','last changed':'Network Updated','last update of RDAP database':'Network Updated'}.get(event.get('eventAction'))
+            if label and result[label] == 'UNKNOWN':
+                result[label] = text(event.get('eventDate')) or 'UNKNOWN'
+    states = data.get('status')
+    result['Network Status'] = ', '.join(value for value in states if isinstance(value, str)) if isinstance(states, list) and states else 'UNKNOWN'
+    result['RDAP Status'] = 'OK'
+    result['RDAP Source'] = text(data.get('_rdap_source')) or 'RDAP registry'
+    return result
+
+
+def enrich(info, lite, ip2, pc, ipqs, ip, rdap=None):
     sources = [(info, 'IPinfo'), (lite, 'IPinfo Lite'), (ip2, 'IP2Location')]
     entry = pc.get(ip, {}) if isinstance(pc, dict) else {}
     network = entry.get('network', {}) if isinstance(entry, dict) else {}
@@ -73,7 +168,7 @@ def enrich(info, lite, ip2, pc, ipqs, ip):
                 asn, asn_source = candidate_asn, name
         candidates = (data.get('as_name'), as_info.get('as_name'), data.get('as'),
                       org_match[2] if org_match else None, data.get('organisation'),
-                      data.get('organization'), data.get('Organization'), data.get('ISP'), data.get('isp'))
+                      data.get('organization'), data.get('Organization'), data.get('ISP'), data.get('isp'), data.get('provider'))
         candidate_provider = next((text(value) for value in candidates if text(value)), None)
         if provider == 'UNKNOWN' and candidate_provider:
             provider, provider_source = candidate_provider, name
@@ -95,9 +190,34 @@ def enrich(info, lite, ip2, pc, ipqs, ip):
         failed = any(status(data, name) != 'OK' for data, name in ((ip2, 'IP2Location'), (pc, 'Proxycheck')))
     failed |= bool(ipqs) and status(ipqs, 'IPQS') != 'OK'
     result['Lookup Health'] = 'PARTIAL' if failed or missing else 'OK'
+    detections = entry.get('detections', {}) if isinstance(entry, dict) else {}
+    detections = detections if isinstance(detections, dict) else {}
+    pc_ok = status(pc, 'Proxycheck') == 'OK'
+    result['PC Risk'] = number(detections.get('risk', entry.get('risk')), 0, 100) if pc_ok else 'UNKNOWN'
+    result['PC Confidence'] = number(detections.get('confidence'), 0, 100) if pc_ok else 'UNKNOWN'
+    review = []
+    qs_score = number(ipqs.get('fraud_score'), 0, 100) if isinstance(ipqs, dict) and type(ipqs.get('fraud_score')) in (int, float) and status(ipqs, 'IPQS') == 'OK' else 'UNKNOWN'
+    if qs_score != 'UNKNOWN' and float(qs_score) >= 75:
+        review.append('IPQS_HIGH_RISK' if float(qs_score) >= 90 else 'IPQS_ELEVATED_RISK')
+    if result['PC Risk'] != 'UNKNOWN' and float(result['PC Risk']) > 25:
+        review.append('PC_HIGH_RISK' if float(result['PC Risk']) > 75 else 'PC_ELEVATED_RISK')
+    result['Score Review'] = '+'.join(review)
+    result.update(geolocation(info, ip2, ipqs))
+    if rdap is not None:
+        result.update(rdap_fields(rdap, ip))
+        if result['RDAP Status'] != 'OK':
+            result['Lookup Health'] = 'PARTIAL'
     return result
 
 
 if __name__ == '__main__':
-    data = json.load(sys.stdin)
-    print(json.dumps(enrich(**data)))
+    if sys.argv[1:] == ['--csv-header']:
+        csv.writer(sys.stdout, lineterminator='\n').writerow(REPORT_COLUMNS)
+    elif len(sys.argv) == 3 and sys.argv[1] == '--rdap-cidr':
+        try:
+            print(rdap_fields(json.load(sys.stdin), sys.argv[2])['CIDR'])
+        except (ValueError, TypeError):
+            print('UNKNOWN')
+    else:
+        data = json.load(sys.stdin)
+        print(json.dumps(enrich(**data)))

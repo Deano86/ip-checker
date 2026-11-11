@@ -8,8 +8,29 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 import spamhaus_domain
+import tldextract
+from datetime import datetime, timezone
 
 TYPES = {'A': 1, 'AAAA': 28, 'MX': 15, 'NS': 2, 'TXT': 16, 'CNAME': 5, 'SOA': 6}
+SUFFIXES = tldextract.TLDExtract(suffix_list_urls=(), cache_dir=None, include_psl_private_domains=False)
+
+
+def registration_target(domain):
+    """Use the bundled PSL offline; never guess a parent by removing two labels."""
+    extracted = SUFFIXES(domain)
+    return extracted.top_domain_under_public_suffix, extracted.suffix
+
+
+def registration_query(domain):
+    data, state = get_json('https://rdap.org/domain/' + domain, 'application/rdap+json')
+    if state == 'OK':
+        try:
+            name = validate_domain(data.get('ldhName') or data.get('unicodeName'))
+        except ValueError:
+            name = ''
+        if name != domain:
+            return {}, 'INVALID_REGISTRATION_RESPONSE'
+    return data, state
 
 
 def validate_domain(value):
@@ -130,14 +151,20 @@ def dns_query(domain, record_type):
 
 
 def lookup(domain, spamhaus_key=None):
+    registered, suffix = registration_target(domain)
+    target = registered or domain
     with ThreadPoolExecutor(max_workers=10) as pool:
-        rdap = pool.submit(get_json, 'https://rdap.org/domain/' + domain, 'application/rdap+json')
+        rdap = pool.submit(registration_query, target) if registered or not suffix else None
         dns_futures = [pool.submit(dns_query, domain, record_type) for record_type in TYPES]
         spamhaus_futures = [pool.submit(spamhaus_domain.lookup, domain, spamhaus_key, zone) for zone in ('dbl', 'zrd')]
-        data, state = rdap.result()
+        data, state = rdap.result() if rdap else ({}, 'PUBLIC_SUFFIX_ONLY')
         queries = [future.result() for future in dns_futures]
         reputation = [future.result() for future in spamhaus_futures]
     report = registration(domain, data, state)
+    report.update({'RDAP Query Domain': target if rdap else 'NOT_APPLICABLE',
+                   'Public Suffix': suffix or 'UNKNOWN',
+                   'Registration Scope': 'Registered parent domain' if registered and target != domain else 'Submitted domain',
+                   'Checked At': datetime.now(timezone.utc).isoformat()})
     records, seen = [], set()
     for query in queries:
         for record in query['records']:
@@ -146,8 +173,18 @@ def lookup(domain, spamhaus_key=None):
                 seen.add(key)
                 records.append(record)
     healthy = state == 'OK' and all(query['status'] in ('OK', 'NO_RECORDS') for query in queries)
-    if spamhaus_key:
-        healthy = healthy and all(check['status'] == 'OK' for check in reputation)
+    healthy = healthy and all(check['status'] == 'OK' for check in reputation)
+    notes = []
+    if target != domain:
+        notes.append('Registration describes '+target+'; DNS and Spamhaus checks describe '+domain+'.')
+    if state != 'OK':
+        notes.append('Registration lookup: '+state+'. This is missing registration data, not a threat detection or an availability verdict.')
+    for query in queries:
+        if query['status'] not in ('OK', 'NO_RECORDS'):
+            notes.append('DNS '+query['type']+': '+query['status']+'.')
+    for check in reputation:
+        if check['status'] != 'OK':
+            notes.append('Spamhaus '+check['list']+': '+check['status']+'. No reputation verdict is available from this check.')
     return {'report': report, 'records': records,
             'queries': [{'type': query['type'], 'status': query['status']} for query in queries],
-            'health': 'OK' if healthy else 'PARTIAL', 'reputation': reputation}
+            'health': 'OK' if healthy else 'PARTIAL', 'reputation': reputation, 'notes': notes}

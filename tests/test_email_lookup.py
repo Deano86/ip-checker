@@ -21,12 +21,12 @@ class EmailTests(unittest.TestCase):
         self.assertEqual(report['Recent Abuse'], 'UNKNOWN')
 
     def test_timed_out_negative_is_not_confirmed_invalid(self):
-        report = email_lookup.normalise('test@example.com', {'valid': False, 'timed_out': True})
+        report = email_lookup.normalise('test@example.com', {'success': True, 'valid': False, 'timed_out': True})
         self.assertEqual(report['Valid'], 'UNKNOWN')
         self.assertEqual(report['Verification Timed Out'], 'YES')
 
     def test_only_selected_fields_are_returned(self):
-        report = email_lookup.normalise('test@example.com', {'valid': True, 'private_key': 'private-sentinel', 'first_name': 'Sensitive', 'message': 'private-sentinel'})
+        report = email_lookup.normalise('test@example.com', {'success': True, 'valid': True, 'private_key': 'private-sentinel', 'first_name': 'Sensitive', 'message': 'private-sentinel'})
         self.assertNotIn('private-sentinel', json.dumps(report))
         self.assertNotIn('Sensitive', json.dumps(report))
 
@@ -37,7 +37,7 @@ class EmailTests(unittest.TestCase):
             self.assertNotIn('secret-key-sentinel', str(context.exception))
 
     def test_post_uses_header_authentication_without_key_in_url(self):
-        with patch.object(email_lookup, 'urlopen', return_value=io.BytesIO(b'{"valid":true,"fraud_score":25}')) as request:
+        with patch.object(email_lookup, 'urlopen', return_value=io.BytesIO(b'{"success":true,"valid":true,"fraud_score":25}')) as request:
             report = email_lookup.lookup('test@example.com', 'secret-key-sentinel')
         actual = request.call_args.args[0]
         self.assertEqual(actual.get_method(), 'POST')
@@ -56,6 +56,24 @@ class EmailTests(unittest.TestCase):
                 with self.assertRaises(email_lookup.LookupError) as context:
                     email_lookup.lookup('test@example.com', 'secret-key-sentinel')
                 self.assertNotIn('secret-key-sentinel', str(context.exception))
+
+
+class EmailReportAccuracyTests(unittest.TestCase):
+    def test_missing_success_flag_is_not_a_verified_provider_response(self):
+        with self.assertRaises(email_lookup.LookupError):
+            email_lookup.normalise('test@example.com', {'valid':True,'fraud_score':0})
+
+    def test_missing_fields_and_catch_all_are_explained(self):
+        report=email_lookup.normalise('test@example.com', {'success':True,'valid':True,'catch_all':True,'fraud_score':0})
+        self.assertEqual(report['Lookup Health'], 'PARTIAL')
+        self.assertIn('individual mailbox cannot be confirmed', report['Lookup Notes'])
+        self.assertEqual(report['Fraud Score'], '0')
+
+    def test_score_risk_and_provider_errors_remain_separate(self):
+        report=email_lookup.normalise('test@example.com', {'success':True,'valid':True,'disposable':False,'deliverability':'high','fraud_score':95})
+        self.assertEqual(report['Lookup Health'], 'OK')
+        self.assertIn('High IPQS email fraud score', report['Review'])
+        self.assertIn('not a delivery probability', report['Score Source'])
 
 
 if __name__ == '__main__':

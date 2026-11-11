@@ -96,8 +96,8 @@ json_flag() {
     printf '%s\n' "${result:-UNKNOWN}"
 }
 
-# RDAP registered allocation. Try redirect service, then registries.
-get_cidr() {
+# Fetch registered allocation data once; reuse it for CIDR and WHOIS-style fields.
+get_rdap() {
     local ip="$1" url response cidr
     local urls=(
         "https://rdap.org/ip/$ip"
@@ -109,36 +109,13 @@ get_cidr() {
     )
     for url in "${urls[@]}"; do
         response=$(api_get -H 'Accept: application/rdap+json' "$url")
-        cidr=$(python3 - "$ip" "$response" <<'PY'
-import ipaddress, json, sys
-try:
-    ip = ipaddress.ip_address(sys.argv[1])
-    data = json.loads(sys.argv[2])
-    matches = []
-    for item in data.get('cidr0_cidrs', []):
-        if 'v4prefix' in item and 'length' in item:
-            network = ipaddress.ip_network(f"{item['v4prefix']}/{item['length']}", strict=False)
-            if ip in network:
-                matches.append(network)
-    if matches:
-        print(max(matches, key=lambda network: network.prefixlen))
-    else:
-        start = ipaddress.ip_address(data['startAddress'])
-        end = ipaddress.ip_address(data['endAddress'])
-        if start <= ip <= end:
-            print(next(str(net) for net in ipaddress.summarize_address_range(start, end) if ip in net))
-        else:
-            print('UNKNOWN')
-except (KeyError, ValueError, TypeError, StopIteration, json.JSONDecodeError):
-    print('UNKNOWN')
-PY
-)
+        cidr=$(printf '%s' "$response" | python3 "$BASE/provider_data.py" --rdap-cidr "$ip")
         if [[ -n "$cidr" && "$cidr" != UNKNOWN ]]; then
-            printf '%s\n' "$cidr"
+            jq -c --arg source "$url" '. + {_rdap_source:$source}' <<< "$response"
             return
         fi
     done
-    echo UNKNOWN
+    echo '{"_lookup_error":"RDAP_UNAVAILABLE"}'
 }
 
 # Return LISTS|STATE. Query status must be checked, not just empty answer.
@@ -149,7 +126,7 @@ spamhaus_lookup() {
     response=$(dig +time=3 +tries=1 +noall +comments +answer "$q" A 2>/dev/null) || { echo 'UNKNOWN|UNKNOWN'; return; }
     status=$(sed -n 's/.*status: \([A-Z]*\),.*/\1/p' <<< "$response" | head -n 1)
     case "$status" in
-        NXDOMAIN) echo 'NONE|NO'; return ;;
+        NXDOMAIN) if awk '$4 == "A" {found=1} END {exit !found}' <<< "$response"; then echo 'INVALID_RESPONSE|UNKNOWN'; else echo 'NONE|NO'; fi; return ;;
         NOERROR) ;;
         *) echo 'UNKNOWN|UNKNOWN'; return ;;
     esac
@@ -164,15 +141,16 @@ spamhaus_lookup() {
             127.0.0.3) labels+=(CSS) ;;
             127.0.0.4) labels+=(XBL) ;;
             127.0.0.9) labels+=(DROP) ;;
-            127.0.0.10|127.0.0.11|127.0.0.12) labels+=(PBL) ;;
+            127.0.0.10|127.0.0.11) labels+=(PBL) ;;
+            127.0.0.30) labels+=(BCL) ;;
             *) labels+=("OTHER:$code") ;;
         esac
     done <<< "$codes"
     joined=$(IFS=+; echo "${labels[*]}")
-    printf '%s|YES\n' "$joined"
+    if [[ "$joined" == *OTHER:* ]]; then printf '%s|UNKNOWN\n' "$joined"; else printf '%s|YES\n' "$joined"; fi
 }
 
-jq -rn '["IP Address","CIDR","ASN","Provider","IP2 Proxy","PC Anonymous","PC VPN","PC Proxy","PC Tor","PC Hosting","PC Network Type","PC Risk","PC Confidence","Spamhaus Lists","Spamhaus Status","Anonymisation","Hosting","Threat Listing","Review","IPQS Status","IPQS Fraud Score","IPQS Proxy","IPQS VPN","IPQS Tor","IPQS Recent Abuse","IPQS Bot","IPinfo Status","IP2Location Status","Proxycheck Status","IPQS Detail","ASN Source","Provider Source","Lookup Health","IPQS Active VPN","IPQS Active Tor","IPQS Connection Type","IPQS Abuse Frequency","IPQS Verified Crawler","IPQS Hostname","IPQS Country"] | @csv' > "$OUTPUT" || { echo "Cannot write output: $OUTPUT" >&2; exit 1; }
+python3 "$BASE/provider_data.py" --csv-header > "$OUTPUT" || { echo "Cannot write output: $OUTPUT" >&2; exit 1; }
 
 printf '\nLoaded %d unique public IPv4 addresses.\n\n' "${#IPS[@]}"
 printf '%-18s %-21s %-10s %-20s %-6s %-6s %-6s %-8s %-14s %s\n' IP CIDR ASN PROVIDER IP2 VPN TOR HOSTING SPAMHAUS REVIEW
@@ -186,7 +164,7 @@ for IP in "${IPS[@]}"; do
         LITE=$(api_get -H "Authorization: Bearer $IPINFO_KEY" "https://api.ipinfo.io/lite/$IP")
     fi
 
-    CIDR=$(get_cidr "$IP")
+    RDAP=$(get_rdap "$IP")
     IP2=$(api_get -G --data-urlencode "key=$IP2_KEY" --data-urlencode "ip=$IP" 'https://api.ip2location.io/')
     IP2_PROXY=$(json_flag "$IP2" is_proxy)
     if jq -e '.error != null or ._lookup_error != null or (._http_status // 200) >= 400' >/dev/null 2>&1 <<< "$IP2"; then IP2_PROXY=UNKNOWN; fi
@@ -206,7 +184,8 @@ for IP in "${IPS[@]}"; do
     case "${PC_NETWORK,,}" in
         hosting|datacenter|data_center|data-centre|data-center) PC_HOSTING=YES ;;
         unknown|null|'') PC_HOSTING=UNKNOWN ;;
-        *) PC_HOSTING=NO ;;
+        residential|business|wireless) PC_HOSTING=NO ;;
+        *) PC_HOSTING=UNKNOWN ;;
     esac
     PC_RISK=$(jq -r '.detections.risk // .risk // "UNKNOWN"' <<< "$PC_ENTRY")
     PC_CONFIDENCE=$(jq -r '.detections.confidence // "UNKNOWN"' <<< "$PC_ENTRY")
@@ -240,12 +219,15 @@ for IP in "${IPS[@]}"; do
 
 
     META=$(jq -n --argjson info "$INFO" --argjson lite "$LITE" --argjson ip2 "$IP2" \
-        --argjson pc "$PC" --argjson ipqs "$IPQS_RAW" --arg ip "$IP" \
-        '{info:$info,lite:$lite,ip2:$ip2,pc:$pc,ipqs:$ipqs,ip:$ip}' | python3 "$BASE/provider_data.py") || exit 1
+        --argjson pc "$PC" --argjson ipqs "$IPQS_RAW" --argjson rdap "$RDAP" --arg ip "$IP" \
+        '{info:$info,lite:$lite,ip2:$ip2,pc:$pc,ipqs:$ipqs,ip:$ip,rdap:$rdap}' | python3 "$BASE/provider_data.py") || exit 1
+    CIDR=$(jq -r ' .CIDR ' <<< "$META")
+    PC_RISK=$(jq -r ' ."PC Risk" ' <<< "$META")
+    PC_CONFIDENCE=$(jq -r ' ."PC Confidence" ' <<< "$META")
     ASN=$(jq -r '.ASN' <<< "$META")
     PROVIDER=$(jq -r '.Provider' <<< "$META")
     HEALTH=$(jq -r '."Lookup Health"' <<< "$META")
-    if [[ "$IP2_PROXY" == UNKNOWN || "$PC_VPN" == UNKNOWN || "$PC_PROXY" == UNKNOWN || "$PC_TOR" == UNKNOWN || "$PC_ANON" == UNKNOWN || "$PC_HOSTING" == UNKNOWN ]] || { ((IPQS_ENABLED)) && [[ "$IPQS_BOT" == UNKNOWN || "$IPQS_ABUSE" == UNKNOWN || "$IPQS_SCORE" == UNKNOWN || "$IPQS_PROXY" == UNKNOWN || "$IPQS_VPN" == UNKNOWN || "$IPQS_TOR" == UNKNOWN ]]; }; then
+    if [[ "$PC_RISK" == UNKNOWN || "$IP2_PROXY" == UNKNOWN || "$PC_VPN" == UNKNOWN || "$PC_PROXY" == UNKNOWN || "$PC_TOR" == UNKNOWN || "$PC_ANON" == UNKNOWN || "$PC_HOSTING" == UNKNOWN ]] || { ((IPQS_ENABLED)) && [[ "$IPQS_BOT" == UNKNOWN || "$IPQS_ABUSE" == UNKNOWN || "$IPQS_SCORE" == UNKNOWN || "$IPQS_PROXY" == UNKNOWN || "$IPQS_VPN" == UNKNOWN || "$IPQS_TOR" == UNKNOWN ]]; }; then
         HEALTH=PARTIAL
     fi
 
@@ -254,7 +236,7 @@ for IP in "${IPS[@]}"; do
     SH_STATUS=${SH##*|}
     [[ "$SH_STATUS" != UNKNOWN ]] || HEALTH=PARTIAL
     THREAT=NO
-    if [[ "$SH_LISTS" == *SBL* || "$SH_LISTS" == *XBL* || "$SH_LISTS" == *CSS* || "$SH_LISTS" == *DROP* ]]; then
+    if [[ "$SH_LISTS" == *SBL* || "$SH_LISTS" == *XBL* || "$SH_LISTS" == *CSS* || "$SH_LISTS" == *DROP* || "$SH_LISTS" == *BCL* ]]; then
         THREAT=YES
         ((THREAT_COUNT+=1))
     elif [[ "$SH_STATUS" == UNKNOWN ]]; then
@@ -272,6 +254,11 @@ for IP in "${IPS[@]}"; do
     [[ "$PC_HOSTING" != YES ]] || ((HOST_COUNT+=1))
 
     FLAGS=()
+    SCORE_FLAGS=$(jq -r '."Score Review"' <<< "$META")
+    if [[ -n "$SCORE_FLAGS" && "$SCORE_FLAGS" != null ]]; then
+        IFS='+' read -r -a SCORE_FLAGS_ARRAY <<< "$SCORE_FLAGS"
+        FLAGS+=("${SCORE_FLAGS_ARRAY[@]}")
+    fi
     if [[ "$PC_VPN" == YES || "$IPQS_VPN" == YES || "$IPQS_ACTIVE_VPN" == YES ]]; then FLAGS+=(VPN); fi
     if [[ "$PC_TOR" == YES || "$IPQS_TOR" == YES || "$IPQS_ACTIVE_TOR" == YES ]]; then FLAGS+=(TOR); fi
     if [[ "$IP2_PROXY" == YES || "$PC_PROXY" == YES || "$PC_ANON" == YES || "$IPQS_PROXY" == YES ]]; then FLAGS+=(PROXY); fi
@@ -301,7 +288,7 @@ for IP in "${IPS[@]}"; do
         --arg qsabuse "$IPQS_ABUSE" --arg qsbot "$IPQS_BOT" --argjson meta "$META" --arg health "$HEALTH" \
         --arg qactivevpn "$IPQS_ACTIVE_VPN" --arg qactivetor "$IPQS_ACTIVE_TOR" --arg qconnection "$IPQS_CONNECTION" \
         --arg qvelocity "$IPQS_VELOCITY" --arg qcrawler "$IPQS_CRAWLER" --arg qhost "$IPQS_HOST" --arg qcountry "$IPQS_COUNTRY" \
-        '[$ip,$cidr,$asn,$provider,$ip2,$anon,$vpn,$proxy,$tor,$hosting,$network,$risk,$confidence,$sh,$shstatus,$anonymisation,$hosting,$threat,$review,$qsstatus,$qsscore,$qsproxy,$qsvpn,$qstor,$qsabuse,$qsbot,$meta["IPinfo Status"],$meta["IP2Location Status"],$meta["Proxycheck Status"],$meta["IPQS Detail"],$meta["ASN Source"],$meta["Provider Source"],$health,$qactivevpn,$qactivetor,$qconnection,$qvelocity,$qcrawler,$qhost,$qcountry] | @csv' >> "$OUTPUT" || { echo "Cannot append output: $OUTPUT" >&2; exit 1; }
+        '[$ip,$cidr,$asn,$provider,$ip2,$anon,$vpn,$proxy,$tor,$hosting,$network,$risk,$confidence,$sh,$shstatus,$anonymisation,$hosting,$threat,$review,$qsstatus,$qsscore,$qsproxy,$qsvpn,$qstor,$qsabuse,$qsbot,$meta["IPinfo Status"],$meta["IP2Location Status"],$meta["Proxycheck Status"],$meta["IPQS Detail"],$meta["ASN Source"],$meta["Provider Source"],$health,$qactivevpn,$qactivetor,$qconnection,$qvelocity,$qcrawler,$qhost,$qcountry] + [$meta["Country Code"], $meta["Country"], $meta["Region"], $meta["City"], $meta["Timezone"], $meta["Latitude"], $meta["Longitude"], $meta["Geolocation Source"], $meta["RDAP Status"], $meta["Network Name"], $meta["Network Handle"], $meta["Network Start"], $meta["Network End"], $meta["Network Country"], $meta["Network Registered"], $meta["Network Updated"], $meta["Network Status"], $meta["RDAP Source"]] | @csv' >> "$OUTPUT" || { echo "Cannot append output: $OUTPUT" >&2; exit 1; }
     sleep 0.2
 done
 printf '\nTotal: %d | VPN: %d | Other proxy/anonymous: %d | Hosting: %d | Spamhaus threat: %d | Incomplete: %d\n' \

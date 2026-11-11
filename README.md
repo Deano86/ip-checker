@@ -4,7 +4,7 @@
 
 Check public IPv4 addresses against IPinfo, IP2Location, proxycheck.io and
 Spamhaus DQS, and optionally IPQualityScore (IPQS), with registered allocation CIDRs from RDAP. Prints a terminal
-summary and writes a 40-column CSV with provider detections, diagnostics and review flags.
+summary and writes a 58-column CSV with provider detections, diagnostics and review flags.
 The browser dashboard adds live progress, summary cards, text-file import,
 search, filters, sortable results, per-address detail views and CSV export.
 Local accounts, SQLite history, authenticator codes, passkeys and admin controls
@@ -208,11 +208,71 @@ environment with `python3 -m pip install -r requirements.txt` before starting.
 Create the first administrator with `python3 dashboard.py --create-admin Deano86`.
 Bash, curl, jq, dig and Python 3 run the lookup engine behind the dashboard.
 
+## Reading the IP, domain and email reports
+
+IP reports now retain **58 fields**. The first 40 columns keep their original
+names and order; 18 fields add provider geolocation and RDAP network registration.
+The detail popup shows network ownership, approximate location, registered
+allocation and provider/lookup health alongside the separate risk dials.
+Old saved reports remain readable; run a fresh scan to populate the new fields.
+
+- **Location:** country/code, region, city, timezone, latitude and longitude,
+  where the provider returns them. A location bundle comes from one successful
+  provider (IP2Location, then IPinfo, then IPQS), with its source shown. Missing
+  or invalid coordinates remain UNKNOWN. Geolocation is approximate and is
+  separate from the registered allocation's country.
+- **IP registration:** registered CIDR, network name/handle, start/end range,
+  allocation country, registration/update dates, status and RDAP source. The
+  returned allocation must contain the submitted IP. These are registration
+  records, not a guarantee of the route currently announced in BGP.
+- **Scores:** IPQS IP/email fraud scores and proxycheck v3 risk scores retain
+  their own models. Dials use source-specific bands: IPQS below 75 / 75–89 / 90+;
+  proxycheck 0–25 / above 25–75 / above 75. These are review bands, not a fraud
+  probability or an automatic block decision. Elevated/high scores add explicit
+  review flags even when VPN/proxy booleans are negative. Confidence remains a
+  separate value. Scores are never averaged into an invented overall score.
+- **Spamhaus IP checks:** PBL alone is a policy listing, not a threat verdict.
+  SBL, CSS, XBL, DROP and BCL are positive threat signals. Query errors and unknown
+  return codes stay unknown/incomplete; they do not become a clean result.
+- **Domain registration:** an offline, bundled Public Suffix List selects the
+  registered parent, including multi-label suffixes such as co.uk. A subdomain
+  lookup uses that parent for RDAP while keeping the submitted hostname for
+  DNS and Spamhaus. The report names both scopes. A mismatched RDAP record is
+  rejected. Updating tldextract updates the packaged suffix snapshot.
+- **Domain reputation:** DBL is a domain reputation listing; ZRD is a recently
+  observed-domain signal. A ZRD result alone is not a malware verdict. The
+  summary distinguishes a DBL listing, recent observation, completed negative
+  checks and unavailable checks; it does not assign a numerical domain score.
+- **Email:** validity, disposable/catch-all flags, deliverability and fraud
+  score come from IPQS. The response must explicitly confirm success. Missing
+  core fields and timeouts get an incomplete-data notice; a timed-out negative
+  mailbox check stays UNKNOWN. Catch-all servers cannot confirm an individual
+  mailbox. The report includes a review summary, source and checked-at time.
+  Reopened history is labelled Saved report rather than Fresh lookup.
+
+An amber incomplete-data notice means data was unavailable. It does not itself
+mean the IP/domain/email is malicious. Actual positive detections remain visible
+independently of missing data. A negative listing check or lower score does not
+guarantee safety. Provider definitions, subscriptions, limits and datasets differ.
+
+Regression tests cover positive, negative, zero, missing/error and malformed
+responses, score-only review, parent-domain scope and source attribution. Public
+RDAP and keyless IP2Location responses can be checked without credentials. Tests
+and documentation fixtures do not replace checking your own account's live API
+access; no working API keys or private lookup results are included in the repo.
+
+References: [IPQS IP score fields](https://www.ipqualityscore.com/documentation/proxy-detection-api/response-parameters),
+[IPQS email fields](https://www.ipqualityscore.com/documentation/email-validation-api/response-parameters),
+[proxycheck v3](https://proxycheck.io/api/),
+[IP2Location fields](https://www.ip2location.io/ip2location-documentation),
+[Spamhaus return codes](https://docs.spamhaus.com/datasets/docs/source/10-data-type-documentation/datasets/040-zones.html),
+[tldextract offline suffix data](https://github.com/john-kurkowski/tldextract).
+
 ## Dashboard behaviour
 
 - Paste or import up to 500 public IPv4 addresses, one per line.
 - Run one scan at a time and watch completed results arrive.
-- Search, sort, filter and open an address for all 40 report fields.
+- Search, sort, filter and open an address for all report fields, including location and network registration.
 - Export all completed rows, even while a scan is running.
 - Check key presence and missing dependencies in the Providers screen.
 

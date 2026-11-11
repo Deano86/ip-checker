@@ -33,7 +33,7 @@ class CheckerTests(unittest.TestCase):
         self.stub('curl', '''#!/usr/bin/env bash
 trap 'printf "\\n%s" "${MOCK_HTTP:-200}"' EXIT
 case "$*" in
-  *rdap*) echo '{"cidr0_cidrs":[{"v4prefix":"1.1.1.0","length":24}]}' ;;
+  *rdap*) echo '{"cidr0_cidrs":[{"v4prefix":"1.1.1.0","length":24}],"name":"Example allocation","handle":"EXAMPLE-NET","country":"AU"}' ;;
   *api.ipinfo.io/lite*)
     if [[ ${MOCK_LITE:-missing} == ok ]]; then echo '{"asn":"AS13335","as_name":"Lite Provider"}'; else echo '{}'; fi ;;
   *ipinfo*)
@@ -49,7 +49,7 @@ case "$*" in
       auth) echo '{"error":{"error_code":10000,"error_message":"secret-sentinel"}}' ;;
       fallback) echo '{"is_proxy":false,"asn":"15169","as":"Fallback Provider"}' ;;
       missing) echo '{}' ;;
-      *) echo '{"is_proxy":false}' ;;
+      *) echo '{"is_proxy":false,"country_code":"GB","country_name":"United Kingdom","city_name":"Example city","latitude":0,"longitude":0}' ;;
     esac ;;
   *ipqualityscore*)
     case ${MOCK_IPQS:-negative} in
@@ -57,6 +57,7 @@ case "$*" in
       malformed) echo 'not json' ;;
       missing) echo '{"success":true}' ;;
       context) echo '{"success":true,"fraud_score":75,"proxy":true,"vpn":true,"tor":false,"recent_abuse":false,"bot_status":false,"active_vpn":true,"active_tor":false,"connection_type":"Data Center","abuse_velocity":"low","is_crawler":false,"host":"example.test","country_code":"FI"}' ;;
+      score_only) echo '{"success":true,"fraud_score":95,"proxy":false,"vpn":false,"tor":false,"recent_abuse":false,"bot_status":false}' ;;
       active_only) echo '{"success":true,"fraud_score":75,"proxy":false,"vpn":false,"tor":false,"recent_abuse":false,"bot_status":false,"active_vpn":true,"active_tor":true}' ;;
       positive) echo '{"success":true,"fraud_score":95,"proxy":true,"vpn":true,"tor":true,"recent_abuse":true,"bot_status":true}' ;;
       *) echo '{"success":true,"fraud_score":0,"proxy":false,"vpn":false,"tor":false,"recent_abuse":false,"bot_status":false}' ;;
@@ -73,6 +74,8 @@ case ${MOCK_DNS:-negative} in
   negative) echo ';; ->>HEADER<<- opcode: QUERY, status: NXDOMAIN, id: 1' ;;
   failure) echo ';; ->>HEADER<<- opcode: QUERY, status: SERVFAIL, id: 1' ;;
   pbl) printf ';; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1\nquery. 60 IN A 127.0.0.10\n' ;;
+  bcl) printf ';; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1\nquery. 60 IN A 127.0.0.30\n' ;;
+  other) printf ';; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1\nquery. 60 IN A 127.0.0.99\n' ;;
   threat) printf ';; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1\nquery. 60 IN A 127.0.0.2\n' ;;
   query_error) printf ';; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1\nquery. 60 IN A 127.255.255.254\n' ;;
 esac
@@ -97,7 +100,7 @@ esac
         with (self.base / 'ip-results.csv').open(newline='') as handle:
             rows = list(csv.DictReader(handle))
         self.assertEqual(len(rows), 1)
-        self.assertEqual(len(rows[0]), 40)
+        self.assertEqual(len(rows[0]), 58)
         self.assertIn('Skipping invalid/non-public IP', result.stderr)
         return rows[0]
 
@@ -224,6 +227,34 @@ esac
         row = self.row(MOCK_DNS='threat')
         self.assertEqual(row['Threat Listing'], 'YES')
         self.assertEqual(row['Review'], 'SPAMHAUS_THREAT')
+
+    def test_geolocation_and_registration_are_exported_with_sources(self):
+        row = self.row()
+        self.assertEqual(row['Country Code'], 'GB')
+        self.assertEqual(row['City'], 'Example city')
+        self.assertEqual(row['Latitude'], '0')
+        self.assertEqual(row['Network Country'], 'AU')
+        self.assertEqual(row['Network Name'], 'Example allocation')
+        self.assertEqual(row['Geolocation Source'], 'IP2Location')
+        self.assertEqual(row['RDAP Status'], 'OK')
+
+    def test_high_score_without_boolean_detections_requires_review(self):
+        self.enable_ipqs()
+        row = self.row(MOCK_IPQS='score_only')
+        self.assertEqual(row['Anonymisation'], 'NO')
+        self.assertIn('IPQS_HIGH_RISK', row['Review'])
+
+    def test_unknown_spamhaus_codes_are_not_a_clear_verdict(self):
+        row = self.row(MOCK_DNS='other')
+        self.assertEqual(row['Spamhaus Status'], 'UNKNOWN')
+        self.assertEqual(row['Threat Listing'], 'UNKNOWN')
+        self.assertEqual(row['Lookup Health'], 'PARTIAL')
+        self.assertNotEqual(row['Review'], 'NO_POSITIVE_DETECTION')
+
+    def test_spamhaus_bcl_is_a_positive_threat_signal(self):
+        row = self.row(MOCK_DNS='bcl')
+        self.assertEqual(row['Spamhaus Lists'], 'BCL')
+        self.assertEqual(row['Threat Listing'], 'YES')
 
     def test_missing_secrets_fails_before_output(self):
         (self.base / '.secrets').unlink()
