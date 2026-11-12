@@ -10,7 +10,8 @@ const providers = [
   {name:'Spamhaus',logo:'sh',description:'Threat & reputation lists'},
   {name:'IPQS',logo:'iq',description:'Fraud score & abuse · optional'},
   {name:'Kickbox',logo:'kb',description:'Email deliverability & Sendex · optional'},
-  {name:'MaxMind GeoLite2',logo:'mm',description:'Local IP geolocation · optional'}
+  {name:'MaxMind GeoLite2',logo:'mm',description:'Local IP geolocation · optional'},
+  {name:'AbuseIPDB',logo:'ab',description:'Reported IP abuse · optional'}
 ];
 
 function element(tag, className, text) {
@@ -132,6 +133,8 @@ function render() {
     const scoreCell = element('td');
     scoreCell.append(element('span','badge '+(score && score!=='UNKNOWN'?'':'unknown'),score && score!=='UNKNOWN'?score+' / 100':row['IPQS Status']==='NOT_CONFIGURED'?'Not enabled':'Unknown'));
     tr.append(scoreCell);
+    const abuseCell=element('td');const abuseScore=IPSignals.score(row['AbuseIPDB Confidence']);
+    abuseCell.append(element('span','badge '+(abuseScore===null?'unknown':''),abuseScore===null?(row['AbuseIPDB Status']==='NOT_CONFIGURED'?'Not enabled':'Unknown'):abuseScore+' / 100'));tr.append(abuseCell);
     const review = element('td');
     const label = row.Review==='NO_POSITIVE_DETECTION'?'No positives':row.Review==='INCOMPLETE'?'Incomplete':row.Review.replaceAll('_',' ').replaceAll('+',' · ');
     review.append(element('span','review-badge '+(row.Review==='NO_POSITIVE_DETECTION'?'negative':row.Review==='INCOMPLETE'?'incomplete':''),label)); if (row['Lookup Health']==='PARTIAL') review.append(element('small','partial-note','Partial provider data')); tr.append(review);
@@ -166,14 +169,17 @@ function openDetails(row) {
   const risk=element('section','popup-risk');
   risk.append(element('h3','','Risk & reputation'));
   const gauges=element('div','popup-risk-grid');
-  for(const [name,title] of [['detail-ipqs','IPQS fraud risk'],['detail-pc','proxycheck risk']]) {
+  for(const [name,title] of [['detail-ipqs','IPQS fraud risk'],['detail-pc','proxycheck risk'],['detail-abuse','AbuseIPDB confidence']]) {
     const card=element('article','risk-card'); card.append(element('h3','',title));
     const dial=element('div','dial unknown'); dial.id='dial-'+name; dial.setAttribute('role','group'); dial.setAttribute('aria-label',title); dial.setAttribute('aria-valuemin','0'); dial.setAttribute('aria-valuemax','100');
+    if(name==='detail-abuse') dial.classList.add('abuse-dial');
     const inner=element('div','dial-inner');
     const value=element('strong','','—'); value.id='dial-'+name+'-value';
     const caption=element('small','','Unknown'); caption.id='dial-'+name+'-caption';
     inner.append(value,caption); dial.append(element('span','dial-marker'),inner,element('span','dial-min','0'),element('span','dial-max','100'));
-    card.append(dial,element('p','','Provider score · 0–100')); gauges.append(card);
+    card.append(dial,element('p','',name==='detail-abuse'?'Abuse confidence · not a fraud probability':'Provider score · 0–100'));
+    if(name==='detail-abuse') card.append(element('p','abuse-facts','Status: '+(row['AbuseIPDB Status'] || 'Not present in saved report')+' · Reports: '+(row['AbuseIPDB Total Reports'] || 'UNKNOWN')+' · Reporters: '+(row['AbuseIPDB Distinct Reporters'] || 'UNKNOWN')+' · Window: '+(row['AbuseIPDB Lookback Days'] || 'UNKNOWN')+' days · Last reported: '+(row['AbuseIPDB Last Reported'] || 'UNKNOWN')));
+    gauges.append(card);
   }
   const state=element('article','popup-risk-state'); state.append(element('h3','','Spamhaus reputation'));
   const threat=row['Threat Listing']==='YES';
@@ -201,6 +207,7 @@ function openDetails(row) {
   $('detail-content').replaceChildren(risk,network,comparison,dl);
   setDial('detail-ipqs',row['IPQS Fraud Score'],row['IPQS Status']==='NOT_CONFIGURED');
   setDial('detail-pc',row['PC Risk']);
+  setDial('detail-abuse',row['AbuseIPDB Confidence'],row['AbuseIPDB Status']==='NOT_CONFIGURED');
   $('details').showModal(); $('detail-content').scrollTop=0;
 }
 function setDial(name,value,notConfigured=false) {
@@ -212,7 +219,7 @@ function setDial(name,value,notConfigured=false) {
   dial.classList.toggle('unknown',score===null);
   dial.style.setProperty('--needle-angle',(score===null?0:-135+score*2.7)+'deg');
   $('dial-'+name+'-value').textContent=score===null?'—':String(score);
-  $('dial-'+name+'-caption').textContent=score===null?(notConfigured?'Not enabled':'Unknown'):'out of 100 · '+IPSignals.riskBand(provider,score);
+  $('dial-'+name+'-caption').textContent=score===null?(notConfigured?'Not enabled':'Unknown'):name.includes('abuse')?'out of 100 · confidence':'out of 100 · '+IPSignals.riskBand(provider,score);
   dial.setAttribute('aria-valuetext',score===null?'Unknown':score+' out of 100');
   if(score===null) dial.removeAttribute('aria-valuenow'); else dial.setAttribute('aria-valuenow',score);
 }
@@ -226,6 +233,8 @@ function renderGauges() {
   const row=rows.find(row=>row['IP Address']===riskIP) || {};
   setDial('ipqs',row['IPQS Fraud Score'],row['IPQS Status']==='NOT_CONFIGURED');
   setDial('pc',row['PC Risk']);
+  setDial('abuse',row['AbuseIPDB Confidence'],row['AbuseIPDB Status']==='NOT_CONFIGURED');
+  $('abuse-summary').textContent='Status: '+(row['AbuseIPDB Status'] || 'Awaiting data')+' · Reports: '+(row['AbuseIPDB Total Reports'] || 'UNKNOWN')+' · Last: '+(row['AbuseIPDB Last Reported'] || 'UNKNOWN');
   $('reputation-value').textContent=!rows.length?'Awaiting scan':row['Threat Listing']==='YES'?'Threat listing detected':row['Spamhaus Status']==='YES'?'Listed: '+row['Spamhaus Lists']:row['Spamhaus Status']==='NO'?'No Spamhaus listing':'Unknown';
   $('reputation-value').className=row['Threat Listing']==='YES'?'reputation-threat':row['Spamhaus Status']==='YES'?'reputation-listed':row['Spamhaus Status']==='NO'?'reputation-clear':'reputation-unknown';
   $('reputation-note').textContent=row['Spamhaus Status']==='NO'?'No listing returned. This is not a guarantee of safety.':row['Spamhaus Status']==='YES'?'Check list details before making a decision.':'Reputation needs a successful Spamhaus lookup.';

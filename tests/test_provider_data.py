@@ -39,7 +39,7 @@ class ProviderDataTests(unittest.TestCase):
 
 class ReportAccuracyTests(unittest.TestCase):
     def test_appended_schema_keeps_legacy_order(self):
-        self.assertEqual(len(REPORT_COLUMNS), 61)
+        self.assertEqual(len(REPORT_COLUMNS), 69)
         self.assertEqual(REPORT_COLUMNS[:40], LEGACY_COLUMNS)
         self.assertEqual(len(set(REPORT_COLUMNS)), len(REPORT_COLUMNS))
 

@@ -52,6 +52,15 @@ case "$*" in
       missing) echo '{}' ;;
       *) echo '{"is_proxy":false,"country_code":"GB","country_name":"United Kingdom","city_name":"Example city","latitude":0,"longitude":0}' ;;
     esac ;;
+  *api.abuseipdb.com*)
+    if [[ -n ${MOCK_ABUSE_COUNT_FILE:-} ]]; then echo check >> "$MOCK_ABUSE_COUNT_FILE"; fi
+    case ${MOCK_ABUSE:-ok} in
+      quota) MOCK_HTTP=429; echo '{"errors":[{"detail":"secret-sentinel"}]}' ;;
+      auth) MOCK_HTTP=401; echo '{"errors":[{"detail":"secret-sentinel"}]}' ;;
+      malformed) echo 'not json' ;;
+      positive) echo '{"data":{"ipAddress":"1.1.1.1","abuseConfidenceScore":80,"totalReports":15,"numDistinctUsers":4,"lastReportedAt":"2026-01-01T12:00:00Z","isWhitelisted":false}}' ;;
+      *) echo '{"data":{"ipAddress":"1.1.1.1","abuseConfidenceScore":0,"totalReports":0,"numDistinctUsers":0,"lastReportedAt":null,"isWhitelisted":false}}' ;;
+    esac ;;
   *ipqualityscore*)
     case ${MOCK_IPQS:-negative} in
       error) echo '{"success":false,"message":"Invalid key"}' ;;
@@ -82,7 +91,7 @@ case ${MOCK_DNS:-negative} in
 esac
 ''')
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH'])
-        for key in ('IP_CHECKER_SECRETS', 'MOCK_PC', 'MOCK_DNS', 'MOCK_IPQS', 'IPQS_KEY', 'MOCK_HTTP', 'MOCK_INFO', 'MOCK_LITE', 'MOCK_IP2'):
+        for key in ('IP_CHECKER_SECRETS', 'MOCK_PC', 'MOCK_DNS', 'MOCK_IPQS', 'IPQS_KEY', 'MOCK_HTTP', 'MOCK_INFO', 'MOCK_LITE', 'MOCK_IP2', 'MOCK_ABUSE', 'ABUSEIPDB_KEY'):
             self.env.pop(key, None)
 
     def stub(self, name, content):
@@ -101,7 +110,7 @@ esac
         with (self.base / 'ip-results.csv').open(newline='') as handle:
             rows = list(csv.DictReader(handle))
         self.assertEqual(len(rows), 1)
-        self.assertEqual(len(rows[0]), 61)
+        self.assertEqual(len(rows[0]), 69)
         self.assertIn('Skipping invalid/non-public IP', result.stderr)
         return rows[0]
 
@@ -117,6 +126,36 @@ esac
     def enable_ipqs(self):
         with (self.base / '.secrets').open('a') as handle:
             handle.write("IPQS_KEY='test-ipqs'\n")
+
+    def test_abuseipdb_is_optional_and_positive_reports_require_review(self):
+        self.assertEqual(self.row()['AbuseIPDB Status'],'NOT_CONFIGURED')
+        with (self.base/'.secrets').open('a') as handle: handle.write("ABUSEIPDB_KEY='private-abuse-sentinel'\n")
+        row=self.row(MOCK_ABUSE='positive')
+        self.assertEqual(row['AbuseIPDB Status'],'OK')
+        self.assertEqual(row['AbuseIPDB Confidence'],'80')
+        self.assertIn('ABUSEIPDB_REPORTS',row['Review'])
+        self.assertEqual(row['Threat Listing'],'NO')
+        self.assertNotIn('private-abuse-sentinel',str(row))
+
+    def test_abuseipdb_errors_are_unknown_and_partial(self):
+        with (self.base/'.secrets').open('a') as handle: handle.write("ABUSEIPDB_KEY='private-abuse-sentinel'\n")
+        for state in ('quota','auth','malformed'):
+            row=self.row(MOCK_ABUSE=state)
+            self.assertEqual(row['AbuseIPDB Confidence'],'UNKNOWN')
+            self.assertEqual(row['Lookup Health'],'PARTIAL')
+            self.assertEqual(row['Review'],'INCOMPLETE')
+            self.assertNotIn('secret-sentinel',str(row))
+
+    def test_abuseipdb_quota_stops_further_requests_in_batch(self):
+        with (self.base/'.secrets').open('a') as handle: handle.write("ABUSEIPDB_KEY='test-abuse'\n")
+        self.input.write_text('1.1.1.1\n8.8.8.8\n')
+        counter=self.base/'abuse-requests.txt'
+        result=self.run_checker(MOCK_ABUSE='quota',MOCK_ABUSE_COUNT_FILE=str(counter))
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(counter.read_text().splitlines(),['check'])
+        with (self.base/'ip-results.csv').open(newline='') as handle: rows=list(csv.DictReader(handle))
+        self.assertEqual(len(rows),2)
+        self.assertTrue(all(row['AbuseIPDB Status']=='RATE_LIMIT_OR_QUOTA' for row in rows))
 
     def test_ipqs_zero_and_false_are_preserved(self):
         self.enable_ipqs()

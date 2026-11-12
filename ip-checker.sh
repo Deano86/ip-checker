@@ -28,6 +28,8 @@ for name in IPINFO_KEY IP2_KEY PROXY_KEY SPAMHAUS_KEY; do
 done
 # IPQS is optional so existing four-provider installations keep working.
 IPQS_KEY=${IPQS_KEY:-}
+ABUSEIPDB_KEY=${ABUSEIPDB_KEY:-}
+ABUSE_QUOTA=0
 IPQS_ENABLED=0
 [[ -z "$IPQS_KEY" ]] || IPQS_ENABLED=1
 # Protect the input and configuration from accidental output overwrites.
@@ -218,9 +220,19 @@ for IP in "${IPS[@]}"; do
     IPQS_COUNTRY=$(jq -r 'if (.country_code | type) == "string" and (.country_code | length) > 0 then .country_code else "UNKNOWN" end' <<< "$IPQS")
 
 
+    ABUSE='null'
+    if [[ -n "$ABUSEIPDB_KEY" ]]; then
+        if ((ABUSE_QUOTA)); then
+            ABUSE='{"_http_status":429}'
+        else
+            ABUSE=$(api_get --max-redirs 0 -H "Key: $ABUSEIPDB_KEY" -H 'Accept: application/json' -G --data-urlencode "ipAddress=$IP" --data-urlencode 'maxAgeInDays=30' 'https://api.abuseipdb.com/api/v2/check')
+            if jq -e '._http_status == 429' >/dev/null 2>&1 <<< "$ABUSE"; then ABUSE_QUOTA=1; fi
+        fi
+    fi
+
     META=$(jq -n --argjson info "$INFO" --argjson lite "$LITE" --argjson ip2 "$IP2" \
-        --argjson pc "$PC" --argjson ipqs "$IPQS_RAW" --argjson rdap "$RDAP" --arg ip "$IP" \
-        '{info:$info,lite:$lite,ip2:$ip2,pc:$pc,ipqs:$ipqs,ip:$ip,rdap:$rdap}' | python3 "$BASE/provider_data.py") || exit 1
+        --argjson pc "$PC" --argjson ipqs "$IPQS_RAW" --argjson rdap "$RDAP" --argjson abuse "$ABUSE" --arg ip "$IP" \
+        '{info:$info,lite:$lite,ip2:$ip2,pc:$pc,ipqs:$ipqs,ip:$ip,rdap:$rdap,abuse:$abuse}' | python3 "$BASE/provider_data.py") || exit 1
     CIDR=$(jq -r ' .CIDR ' <<< "$META")
     PC_RISK=$(jq -r ' ."PC Risk" ' <<< "$META")
     PC_CONFIDENCE=$(jq -r ' ."PC Confidence" ' <<< "$META")
@@ -288,10 +300,10 @@ for IP in "${IPS[@]}"; do
         --arg qsabuse "$IPQS_ABUSE" --arg qsbot "$IPQS_BOT" --argjson meta "$META" --arg health "$HEALTH" \
         --arg qactivevpn "$IPQS_ACTIVE_VPN" --arg qactivetor "$IPQS_ACTIVE_TOR" --arg qconnection "$IPQS_CONNECTION" \
         --arg qvelocity "$IPQS_VELOCITY" --arg qcrawler "$IPQS_CRAWLER" --arg qhost "$IPQS_HOST" --arg qcountry "$IPQS_COUNTRY" \
-        '[$ip,$cidr,$asn,$provider,$ip2,$anon,$vpn,$proxy,$tor,$hosting,$network,$risk,$confidence,$sh,$shstatus,$anonymisation,$hosting,$threat,$review,$qsstatus,$qsscore,$qsproxy,$qsvpn,$qstor,$qsabuse,$qsbot,$meta["IPinfo Status"],$meta["IP2Location Status"],$meta["Proxycheck Status"],$meta["IPQS Detail"],$meta["ASN Source"],$meta["Provider Source"],$health,$qactivevpn,$qactivetor,$qconnection,$qvelocity,$qcrawler,$qhost,$qcountry] + [$meta["Country Code"], $meta["Country"], $meta["Region"], $meta["City"], $meta["Timezone"], $meta["Latitude"], $meta["Longitude"], $meta["Geolocation Source"], $meta["RDAP Status"], $meta["Network Name"], $meta["Network Handle"], $meta["Network Start"], $meta["Network End"], $meta["Network Country"], $meta["Network Registered"], $meta["Network Updated"], $meta["Network Status"], $meta["RDAP Source"],$meta["MaxMind Status"],$meta["MaxMind Database Date"],$meta["Accuracy Radius km"]] | @csv' >> "$OUTPUT" || { echo "Cannot append output: $OUTPUT" >&2; exit 1; }
+        '[$ip,$cidr,$asn,$provider,$ip2,$anon,$vpn,$proxy,$tor,$hosting,$network,$risk,$confidence,$sh,$shstatus,$anonymisation,$hosting,$threat,$review,$qsstatus,$qsscore,$qsproxy,$qsvpn,$qstor,$qsabuse,$qsbot,$meta["IPinfo Status"],$meta["IP2Location Status"],$meta["Proxycheck Status"],$meta["IPQS Detail"],$meta["ASN Source"],$meta["Provider Source"],$health,$qactivevpn,$qactivetor,$qconnection,$qvelocity,$qcrawler,$qhost,$qcountry] + [$meta["Country Code"], $meta["Country"], $meta["Region"], $meta["City"], $meta["Timezone"], $meta["Latitude"], $meta["Longitude"], $meta["Geolocation Source"], $meta["RDAP Status"], $meta["Network Name"], $meta["Network Handle"], $meta["Network Start"], $meta["Network End"], $meta["Network Country"], $meta["Network Registered"], $meta["Network Updated"], $meta["Network Status"], $meta["RDAP Source"],$meta["MaxMind Status"],$meta["MaxMind Database Date"],$meta["Accuracy Radius km"],$meta["AbuseIPDB Status"],$meta["AbuseIPDB Confidence"],$meta["AbuseIPDB Total Reports"],$meta["AbuseIPDB Distinct Reporters"],$meta["AbuseIPDB Last Reported"],$meta["AbuseIPDB Lookback Days"],$meta["AbuseIPDB Whitelisted"],$meta["AbuseIPDB Checked At"]] | @csv' >> "$OUTPUT" || { echo "Cannot append output: $OUTPUT" >&2; exit 1; }
     sleep 0.2
 done
 printf '\nTotal: %d | VPN: %d | Other proxy/anonymous: %d | Hosting: %d | Spamhaus threat: %d | Incomplete: %d\n' \
     "${#IPS[@]}" "$VPN_COUNT" "$PROXY_COUNT" "$HOST_COUNT" "$THREAT_COUNT" "$UNKNOWN_COUNT"
 printf 'CSV: %s\n' "$OUTPUT"
-unset IPINFO_KEY IP2_KEY PROXY_KEY SPAMHAUS_KEY IPQS_KEY KICKBOX_KEY MAXMIND_ACCOUNT_ID MAXMIND_LICENSE_KEY
+unset IPINFO_KEY IP2_KEY PROXY_KEY SPAMHAUS_KEY IPQS_KEY KICKBOX_KEY MAXMIND_ACCOUNT_ID MAXMIND_LICENSE_KEY ABUSEIPDB_KEY

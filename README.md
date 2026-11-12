@@ -4,7 +4,7 @@
 
 Check public IPv4 addresses against IPinfo, IP2Location, proxycheck.io and
 Spamhaus DQS, and optionally IPQualityScore (IPQS), with registered allocation CIDRs from RDAP. Prints a terminal
-summary and writes a 61-column CSV with provider detections, diagnostics and review flags.
+summary and writes a 69-column CSV with provider detections, diagnostics and review flags.
 The browser dashboard adds live progress, summary cards, text-file import,
 search, filters, sortable results, per-address detail views and CSV export.
 Local accounts, SQLite history, authenticator codes, passkeys and admin controls
@@ -30,7 +30,7 @@ your working files rather than replacing them with templates.
 | File | What to edit before use | When needed |
 | --- | --- | --- |
 | [`.env.example`](.env.example) → `.env` | Allowed hostname, secure-cookie flag and trusted proxy IP/CIDRs. Optional Docker UID/GID. | Defaults work for local HTTP/SSH access. Change these for an HTTPS domain or reverse proxy. |
-| [`.secrets.example`](.secrets.example) → `.secrets` | IPINFO_KEY, IP2_KEY, PROXY_KEY and SPAMHAUS_KEY; optionally IPQS_KEY and KICKBOX_KEY. | Four keys are required for IP scans; IPQS enables fraud scoring/email checks; Kickbox enables email verification independently. |
+| [`.secrets.example`](.secrets.example) → `.secrets` | IPINFO_KEY, IP2_KEY, PROXY_KEY and SPAMHAUS_KEY; optionally IPQS_KEY, KICKBOX_KEY and ABUSEIPDB_KEY. | Four keys are required for IP scans; IPQS enables fraud scoring/email checks; Kickbox enables email verification independently. |
 | `.secrets` | WEBAUTHN_RP_ID and WEBAUTHN_ORIGIN must match the browser hostname and exact origin. | Passkeys. Keep localhost defaults for the documented SSH tunnel; use your HTTPS domain for shared access. |
 | `.secrets` | AUTH_ENCRYPTION_KEY can stay empty. The app creates private `data/auth.key`. | No manual key creation required. Back up the generated key with the database. |
 | [`.mail_secrets.example`](.mail_secrets.example) → `.mail_secrets` | APP_URL plus SMTP_HOST, SMTP_PORT, SMTP_SECURITY, SMTP_USER, SMTP_PASSWORD and SMTP_FROM. | Email verification and password resets. Keep the file present even if SMTP values are blank. |
@@ -208,6 +208,48 @@ environment with `python3 -m pip install -r requirements.txt` before starting.
 Create the first administrator with `python3 dashboard.py --create-admin Deano86`.
 Bash, curl, jq, dig and Python 3 run the lookup engine behind the dashboard.
 
+## Optional AbuseIPDB abuse checks
+
+Add an [AbuseIPDB API key](https://www.abuseipdb.com/account/api) to your server's
+private `.secrets` file (never commit an actual key):
+
+```bash
+ABUSEIPDB_KEY='your-abuseipdb-api-key'
+```
+
+Then update and rebuild, using your existing private `.env` user/group settings:
+
+```bash
+git pull --ff-only --autostash
+docker compose up -d --build
+```
+
+Run a fresh IP scan. The overview and centred results popup show an independent
+**AbuseIPDB abuse-confidence dial (0–100)**, report count, distinct reporter count,
+last-report timestamp, 30-day report lookback, whitelist status and lookup timestamp.
+Confidence is AbuseIPDB's own model, not a fraud probability, and is never averaged
+with IPQS/proxycheck scores. No application-defined green/amber/red thresholds are
+assigned to this score. The table includes a sortable abuse-confidence column.
+
+The integration calls only the read-only `/api/v2/check` endpoint, with
+`maxAgeInDays=30`, no verbose report comments, and the key in an HTTPS header.
+It never submits abuse reports or automatically blocks addresses. Selected fields
+are retained in your private scan history and CSV; raw provider messages/comments
+are excluded. A new scan makes one check per unique IP when the key is present;
+reopening saved results makes no requests. API access and limits depend on your
+account. After HTTP 429, the remaining IPs in that batch are marked quota-limited
+without further AbuseIPDB requests. Redirects are refused to protect the key.
+
+Reported abuse adds an `ABUSEIPDB_REPORTS` review flag even with a zero score;
+a positive confidence value without returned reports adds `ABUSEIPDB_CONFIDENCE`.
+These are evidence for review, not a threat verdict. Missing data, authentication,
+quota, transport and invalid-response errors stay UNKNOWN/PARTIAL; they never become
+a clean zero. Other providers' positive findings remain visible. An absent key is
+NOT_CONFIGURED and does not make scans incomplete. Old saved reports still open;
+run a fresh scan to populate the new fields. Whitelist status is advisory only.
+
+Reference: [AbuseIPDB check API](https://docs.abuseipdb.com/#check-endpoint).
+
 ## Optional free MaxMind GeoLite2 City geolocation
 
 MaxMind GeoLite2 City adds local country, region, city, timezone and approximate
@@ -274,8 +316,8 @@ References: [GeoLite integration](https://dev.maxmind.com/geoip/geolite2-free-ge
 
 ## Reading the IP, domain and email reports
 
-IP reports now retain **61 fields**. The first 40 columns keep their original
-names and order; appended fields add provider geolocation, RDAP network registration and MaxMind database status/date/accuracy radius. The previous 58-column format remains readable.
+IP reports now retain **69 fields**. The first 40 columns keep their original
+names and order; appended fields add provider geolocation, RDAP network registration and MaxMind database status/date/accuracy radius. AbuseIPDB adds confidence, report totals, distinct reporters, last-report time, lookback, whitelist status and check time. Previous 40-, 58- and 61-column reports remain readable.
 The detail popup shows network ownership, approximate location, registered
 allocation and provider/lookup health alongside the separate risk dials.
 Old saved reports remain readable; run a fresh scan to populate the new fields.

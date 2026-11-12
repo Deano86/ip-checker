@@ -14,6 +14,16 @@ import dashboard
 
 
 class InputTests(unittest.TestCase):
+    def test_abuseipdb_is_optional_and_key_is_not_exposed(self):
+        keys={'IPINFO_KEY':'test','IP2_KEY':'test','PROXY_KEY':'test','SPAMHAUS_KEY':'test','ABUSEIPDB_KEY':'private-abuse-sentinel'}
+        with patch.object(dashboard,'secret_values',return_value=keys),patch.object(dashboard.shutil,'which',return_value='/bin/mock'):
+            config=dashboard.configuration()
+        provider=next(p for p in config['providers'] if p['name']=='AbuseIPDB')
+        self.assertTrue(config['ready'])
+        self.assertTrue(provider['configured'])
+        self.assertFalse(provider['required'])
+        self.assertNotIn('private-abuse-sentinel',json.dumps(config))
+
     def test_optional_maxmind_database_does_not_block_ip_scans(self):
         keys={'IPINFO_KEY':'test','IP2_KEY':'test','PROXY_KEY':'test','SPAMHAUS_KEY':'test','MAXMIND_ACCOUNT_ID':'private-account','MAXMIND_LICENSE_KEY':'private-license'}
         for state in ('OK','NOT_INSTALLED','STALE','DATABASE_ERROR'):

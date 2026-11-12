@@ -6,12 +6,57 @@ import csv
 import ipaddress
 import math
 import maxmind_geo
+from datetime import datetime, timezone
 
 LEGACY_COLUMNS = ['IP Address','CIDR','ASN','Provider','IP2 Proxy','PC Anonymous','PC VPN','PC Proxy','PC Tor','PC Hosting','PC Network Type','PC Risk','PC Confidence','Spamhaus Lists','Spamhaus Status','Anonymisation','Hosting','Threat Listing','Review','IPQS Status','IPQS Fraud Score','IPQS Proxy','IPQS VPN','IPQS Tor','IPQS Recent Abuse','IPQS Bot','IPinfo Status','IP2Location Status','Proxycheck Status','IPQS Detail','ASN Source','Provider Source','Lookup Health','IPQS Active VPN','IPQS Active Tor','IPQS Connection Type','IPQS Abuse Frequency','IPQS Verified Crawler','IPQS Hostname','IPQS Country']
 EXTRA_COLUMNS = ['Country Code','Country','Region','City','Timezone','Latitude','Longitude','Geolocation Source','RDAP Status','Network Name','Network Handle','Network Start','Network End','Network Country','Network Registered','Network Updated','Network Status','RDAP Source']
 LEGACY_REPORT_COLUMNS = LEGACY_COLUMNS + EXTRA_COLUMNS
 MAXMIND_COLUMNS = ['MaxMind Status', 'MaxMind Database Date', 'Accuracy Radius km']
-REPORT_COLUMNS = LEGACY_REPORT_COLUMNS + MAXMIND_COLUMNS
+PRE_ABUSE_COLUMNS = LEGACY_REPORT_COLUMNS + MAXMIND_COLUMNS
+ABUSE_COLUMNS = ['AbuseIPDB Status','AbuseIPDB Confidence','AbuseIPDB Total Reports','AbuseIPDB Distinct Reporters','AbuseIPDB Last Reported','AbuseIPDB Lookback Days','AbuseIPDB Whitelisted','AbuseIPDB Checked At']
+REPORT_COLUMNS = PRE_ABUSE_COLUMNS + ABUSE_COLUMNS
+
+
+def abuse_fields(data, ip):
+    result = {key: 'UNKNOWN' for key in ABUSE_COLUMNS}
+    result['AbuseIPDB Status'] = 'NOT_CONFIGURED' if data is None else 'INVALID_RESPONSE'
+    if data is None:
+        return result
+    result['AbuseIPDB Lookback Days'] = '30'
+    result['AbuseIPDB Checked At'] = datetime.now(timezone.utc).isoformat()
+    state = status(data, 'AbuseIPDB')
+    if state != 'OK':
+        result['AbuseIPDB Status'] = state
+        return result
+    if data.get('errors'):
+        result['AbuseIPDB Status'] = 'PROVIDER_ERROR'
+        return result
+    entry = data.get('data')
+    if not isinstance(entry, dict):
+        return result
+    try:
+        if ipaddress.ip_address(entry.get('ipAddress')) != ipaddress.ip_address(ip):
+            return result
+    except (ValueError, TypeError):
+        return result
+    for label, key, limit in [('AbuseIPDB Confidence','abuseConfidenceScore',100),('AbuseIPDB Total Reports','totalReports',2**53-1),('AbuseIPDB Distinct Reporters','numDistinctUsers',2**53-1)]:
+        value = entry.get(key)
+        if type(value) is int and 0 <= value <= limit:
+            result[label] = str(value)
+    value = entry.get('lastReportedAt')
+    if value is None and 'lastReportedAt' in entry and result['AbuseIPDB Total Reports'] == '0':
+        result['AbuseIPDB Last Reported'] = 'NONE'
+    elif isinstance(value, str):
+        try:
+            stamp = datetime.fromisoformat(value.replace('Z','+00:00'))
+            if stamp.tzinfo is not None:
+                result['AbuseIPDB Last Reported'] = stamp.astimezone(timezone.utc).isoformat()
+        except ValueError:
+            pass
+    whitelist = entry.get('isWhitelisted')
+    result['AbuseIPDB Whitelisted'] = 'YES' if whitelist is True else 'NO' if whitelist is False else 'UNKNOWN'
+    result['AbuseIPDB Status'] = 'PARTIAL' if any(result[key] == 'UNKNOWN' for key in ABUSE_COLUMNS[1:5]) else 'OK'
+    return result
 
 
 def text(value):
@@ -144,7 +189,7 @@ def rdap_fields(data, ip):
     return result
 
 
-def enrich(info, lite, ip2, pc, ipqs, ip, rdap=None, maxmind=None):
+def enrich(info, lite, ip2, pc, ipqs, ip, rdap=None, maxmind=None, abuse=None):
     sources = [(info, 'IPinfo'), (lite, 'IPinfo Lite'), (ip2, 'IP2Location')]
     entry = pc.get(ip, {}) if isinstance(pc, dict) else {}
     network = entry.get('network', {}) if isinstance(entry, dict) else {}
@@ -205,6 +250,13 @@ def enrich(info, lite, ip2, pc, ipqs, ip, rdap=None, maxmind=None):
         review.append('IPQS_HIGH_RISK' if float(qs_score) >= 90 else 'IPQS_ELEVATED_RISK')
     if result['PC Risk'] != 'UNKNOWN' and float(result['PC Risk']) > 25:
         review.append('PC_HIGH_RISK' if float(result['PC Risk']) > 75 else 'PC_ELEVATED_RISK')
+    result.update(abuse_fields(abuse, ip))
+    if result['AbuseIPDB Status'] not in ('OK', 'NOT_CONFIGURED'):
+        result['Lookup Health'] = 'PARTIAL'
+    if result['AbuseIPDB Total Reports'] != 'UNKNOWN' and int(result['AbuseIPDB Total Reports']) > 0:
+        review.append('ABUSEIPDB_REPORTS')
+    elif result['AbuseIPDB Confidence'] != 'UNKNOWN' and int(result['AbuseIPDB Confidence']) > 0:
+        review.append('ABUSEIPDB_CONFIDENCE')
     result['Score Review'] = '+'.join(review)
     result.update(geolocation(info, ip2, ipqs, maxmind))
     maxmind = maxmind if isinstance(maxmind, dict) else {}

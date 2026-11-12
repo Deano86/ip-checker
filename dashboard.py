@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 import email_lookup
 import domain_lookup
 from database import Database, token_hash
-from provider_data import REPORT_COLUMNS, LEGACY_COLUMNS, LEGACY_REPORT_COLUMNS
+from provider_data import REPORT_COLUMNS, LEGACY_COLUMNS, LEGACY_REPORT_COLUMNS, PRE_ABUSE_COLUMNS
 import maxmind_geo
 from http.cookies import SimpleCookie, CookieError
 from urllib.parse import parse_qs
@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parent
 DB = None
 AUTH = None
 KEYS = {'IPinfo': 'IPINFO_KEY', 'IP2Location': 'IP2_KEY',
-        'proxycheck.io': 'PROXY_KEY', 'Spamhaus': 'SPAMHAUS_KEY', 'IPQS': 'IPQS_KEY', 'Kickbox': 'KICKBOX_KEY'}
+        'proxycheck.io': 'PROXY_KEY', 'Spamhaus': 'SPAMHAUS_KEY', 'IPQS': 'IPQS_KEY', 'Kickbox': 'KICKBOX_KEY', 'AbuseIPDB': 'ABUSEIPDB_KEY'}
 
 
 def secret_values(path=None):
@@ -57,7 +57,7 @@ def secret_values(path=None):
 def configuration():
     """Report presence only; never return secrets or execute the config."""
     values = secret_values()
-    providers = [{'name': name, 'configured': bool(values.get(key)), 'required': name not in ('IPQS', 'Kickbox')} for name, key in KEYS.items()]
+    providers = [{'name': name, 'configured': bool(values.get(key)), 'required': name not in ('IPQS', 'Kickbox', 'AbuseIPDB')} for name, key in KEYS.items()]
     maxmind = maxmind_geo.database_state()
     providers.append({'name': 'MaxMind GeoLite2', 'configured': maxmind['status'] == 'OK', 'required': False})
     missing = [cmd for cmd in ('bash', 'curl', 'jq', 'dig', 'python3') if not shutil.which(cmd)]
@@ -156,7 +156,7 @@ class ScanStore:
                         contents = output_file.read_text(encoding='utf-8')
                         contents = contents[:contents.rfind('\n') + 1]
                         rows = list(csv.DictReader(io.StringIO(contents)))
-                        rows = [row for row in rows if set(row) in (set(REPORT_COLUMNS), set(LEGACY_REPORT_COLUMNS), set(LEGACY_COLUMNS)) and None not in row and all(v is not None for v in row.values())]
+                        rows = [row for row in rows if set(row) in (set(REPORT_COLUMNS), set(PRE_ABUSE_COLUMNS), set(LEGACY_REPORT_COLUMNS), set(LEGACY_COLUMNS)) and None not in row and all(v is not None for v in row.values())]
                         rows = [{k: ('UNKNOWN' if v is None or not str(v).strip() else v) for k, v in row.items()} for row in rows]
                         with self.lock:
                             self.scans[scan_id]['rows'] = rows
