@@ -4,7 +4,7 @@
 
 Check public IPv4 addresses against IPinfo, IP2Location, proxycheck.io and
 Spamhaus DQS, and optionally IPQualityScore (IPQS), with registered allocation CIDRs from RDAP. Prints a terminal
-summary and writes a 58-column CSV with provider detections, diagnostics and review flags.
+summary and writes a 61-column CSV with provider detections, diagnostics and review flags.
 The browser dashboard adds live progress, summary cards, text-file import,
 search, filters, sortable results, per-address detail views and CSV export.
 Local accounts, SQLite history, authenticator codes, passkeys and admin controls
@@ -208,17 +208,81 @@ environment with `python3 -m pip install -r requirements.txt` before starting.
 Create the first administrator with `python3 dashboard.py --create-admin Deano86`.
 Bash, curl, jq, dig and Python 3 run the lookup engine behind the dashboard.
 
+## Optional free MaxMind GeoLite2 City geolocation
+
+MaxMind GeoLite2 City adds local country, region, city, timezone and approximate
+coordinates to IP reports. It supplies location, not a fraud, VPN or reputation
+score. Scanned addresses are not sent to MaxMind; only database downloads use
+your MaxMind account. No database or license key is bundled in this repository.
+
+1. [Create a free MaxMind GeoLite account](https://www.maxmind.com/en/geolite2/signup)
+   and obtain a license key with database-download access, subject to MaxMind's terms.
+2. Add to your server's private `.secrets` (not `.env` or GitHub):
+
+   ```bash
+   MAXMIND_ACCOUNT_ID='your-numeric-account-id'
+   MAXMIND_LICENSE_KEY='your-download-license-key'
+   ```
+
+3. Pull/build the updated app, then download the database as the configured container user:
+
+   ```bash
+   git pull --ff-only --autostash
+   docker compose up -d --build
+   docker compose exec -T ip-checker python3 maxmind_geo.py update
+   docker compose exec -T ip-checker python3 maxmind_geo.py status
+   ```
+
+The command stores `data/GeoLite2-City.mmdb` in the existing private data volume.
+Make sure that volume is writable by your configured LOCAL_UID/LOCAL_GID.
+Downloads use HTTPS and Basic authentication in a header. Only MaxMind's
+documented HTTPS download/storage hosts are accepted, and authorization is
+removed before redirecting to storage. The database is validated before atomic
+replacement; a failed update keeps the old file. Keep the database out of Git
+and Docker images. You can alternatively place a current, officially downloaded
+GeoLite2-City MMDB at that path with permissions readable by the container user.
+
+**Keep it updated:** run the update command daily (or use MaxMind's official
+`geoipupdate` tool). For the standard `~/ip-checker` checkout, the following entry
+in the host account's `crontab -e` runs daily at 04:17:
+
+```cron
+17 4 * * * cd "$HOME/ip-checker" && /usr/bin/docker compose exec -T ip-checker python3 maxmind_geo.py update
+```
+
+Adjust the checkout path and Docker binary location for your server. The cron
+account needs Docker access; running containers must be available. Credentials
+are read from the mounted `.secrets`, not the cron command. Review cron output
+for failures and respect your MaxMind account's download limits. Refresh Providers
+to see database readiness/date after an update. No app restart is needed.
+
+New scans prefer a valid current GeoLite2 City location bundle. If the database
+is missing, corrupt, unreadable, has no matching location, or is over 30 days old,
+the app falls back to the existing providers. This optional source never prevents
+IP scans or changes provider risk scores. Stale data is not used. CSV/history
+retain MaxMind status and build date; accuracy radius in km is shown when MaxMind
+supplies the location. Old saved reports are unchanged; scan again for new data.
+
+Geolocation describes an area, not a person, house or precise device location.
+The radius is an estimate, not a guarantee. MaxMind's registered-country data is
+not substituted for the geolocated country. Existing RDAP allocation details stay
+separate. This product includes GeoLite2 Data created by MaxMind, available from
+[MaxMind](https://www.maxmind.com).
+
+References: [GeoLite integration](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data/),
+[database updates](https://dev.maxmind.com/geoip/updating-databases/).
+
 ## Reading the IP, domain and email reports
 
-IP reports now retain **58 fields**. The first 40 columns keep their original
-names and order; 18 fields add provider geolocation and RDAP network registration.
+IP reports now retain **61 fields**. The first 40 columns keep their original
+names and order; appended fields add provider geolocation, RDAP network registration and MaxMind database status/date/accuracy radius. The previous 58-column format remains readable.
 The detail popup shows network ownership, approximate location, registered
 allocation and provider/lookup health alongside the separate risk dials.
 Old saved reports remain readable; run a fresh scan to populate the new fields.
 
 - **Location:** country/code, region, city, timezone, latitude and longitude,
   where the provider returns them. A location bundle comes from one successful
-  provider (IP2Location, then IPinfo, then IPQS), with its source shown. Missing
+  provider (current local MaxMind GeoLite2, then IP2Location, IPinfo and IPQS), with its source shown. Missing
   or invalid coordinates remain UNKNOWN. Geolocation is approximate and is
   separate from the registered allocation's country.
 - **IP registration:** registered CIDR, network name/handle, start/end range,

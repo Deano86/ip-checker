@@ -14,6 +14,18 @@ import dashboard
 
 
 class InputTests(unittest.TestCase):
+    def test_optional_maxmind_database_does_not_block_ip_scans(self):
+        keys={'IPINFO_KEY':'test','IP2_KEY':'test','PROXY_KEY':'test','SPAMHAUS_KEY':'test','MAXMIND_ACCOUNT_ID':'private-account','MAXMIND_LICENSE_KEY':'private-license'}
+        for state in ('OK','NOT_INSTALLED','STALE','DATABASE_ERROR'):
+            with patch.object(dashboard,'secret_values',return_value=keys),patch.object(dashboard.shutil,'which',return_value='/bin/mock'),patch.object(dashboard.maxmind_geo,'database_state',return_value={'status':state,'database_date':'UNKNOWN'}):
+                config=dashboard.configuration()
+            self.assertTrue(config['ready'])
+            provider=next(p for p in config['providers'] if p['name']=='MaxMind GeoLite2')
+            self.assertFalse(provider['required'])
+            self.assertEqual(provider['configured'],state=='OK')
+            self.assertNotIn('private-account',json.dumps(config))
+            self.assertNotIn('private-license',json.dumps(config))
+
     def test_validation_and_deduplication(self):
         addresses, skipped = dashboard.parse_ips('\ufeff1.1.1.1\n1.1.1.1 # duplicate\n8.8.8.8\n127.0.0.1\n::1\ninvalid')
         self.assertEqual(addresses, ['1.1.1.1', '8.8.8.8'])

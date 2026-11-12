@@ -23,6 +23,7 @@ class CheckerTests(unittest.TestCase):
         self.script = self.base / 'ip-checker.sh'
         shutil.copyfile(SCRIPT, self.script)
         shutil.copyfile(ROOT / 'provider_data.py', self.base / 'provider_data.py')
+        shutil.copyfile(ROOT / 'maxmind_geo.py', self.base / 'maxmind_geo.py')
         (self.base / '.secrets').write_text(
             "IPINFO_KEY='test'\nIP2_KEY='test'\nPROXY_KEY='test'\nSPAMHAUS_KEY='test'\n"
         )
@@ -100,7 +101,7 @@ esac
         with (self.base / 'ip-results.csv').open(newline='') as handle:
             rows = list(csv.DictReader(handle))
         self.assertEqual(len(rows), 1)
-        self.assertEqual(len(rows[0]), 58)
+        self.assertEqual(len(rows[0]), 61)
         self.assertIn('Skipping invalid/non-public IP', result.stderr)
         return rows[0]
 

@@ -9,7 +9,8 @@ const providers = [
   {name:'proxycheck.io',logo:'pc',description:'VPN, Tor & hosting'},
   {name:'Spamhaus',logo:'sh',description:'Threat & reputation lists'},
   {name:'IPQS',logo:'iq',description:'Fraud score & abuse · optional'},
-  {name:'Kickbox',logo:'kb',description:'Email deliverability & Sendex · optional'}
+  {name:'Kickbox',logo:'kb',description:'Email deliverability & Sendex · optional'},
+  {name:'MaxMind GeoLite2',logo:'mm',description:'Local IP geolocation · optional'}
 ];
 
 function element(tag, className, text) {
@@ -44,16 +45,18 @@ async function loadConfig() {
     $('provider-list').replaceChildren(); $('setup-cards').replaceChildren();
     providers.forEach(provider => {
       const ready = config.providers.find(item => item.name === provider.name)?.configured;
-      const state = () => { const node = element('span','provider-state '+(ready?'ready':'missing')); node.append(element('i'),document.createTextNode(ready?'Configured':'Key needed')); return node; };
+      const isMaxMind=provider.name==='MaxMind GeoLite2';
+      const description=provider.description+(isMaxMind?' · '+(config.maxmind?.database_date && config.maxmind.database_date!=='UNKNOWN'?'Database '+config.maxmind.database_date:'Install GeoLite2 City'):'');
+      const state = () => { const node = element('span','provider-state '+(ready?'ready':'missing')); node.append(element('i'),document.createTextNode(isMaxMind?(ready?'Database ready':config.maxmind?.status || 'NOT_INSTALLED'):(ready?'Configured':'Key needed'))); return node; };
       const row = element('div','provider-row');
-      const name = element('div','provider-name',provider.name); name.append(element('small','',provider.description));
+      const name = element('div','provider-name',provider.name); name.append(element('small','',description));
       row.append(element('span','provider-logo',provider.logo),name,state()); $('provider-list').append(row);
       const card = element('article','panel setup-card');
-      card.append(element('span','provider-logo',provider.logo),element('h2','',provider.name),element('p','',provider.description),state());
+      card.append(element('span','provider-logo',provider.logo),element('h2','',provider.name),element('p','',description),state());
       $('setup-cards').append(card);
     });
     const count = config.providers.filter(provider => provider.configured).length;
-    $('provider-summary').textContent = count+' of '+providers.length+' keys configured';
+    $('provider-summary').textContent = count+' of '+providers.length+' sources configured';
     $('dependency-note').textContent = config.missing_dependencies.length ? 'Missing server dependencies: '+config.missing_dependencies.join(', ')+'. Use the Docker setup or install them before scanning.' : 'All checker dependencies are available on the server.';
     if (config.active_scan && !polling) { scanId = config.active_scan; await poll(); }
     return config;
@@ -186,11 +189,15 @@ function openDetails(row) {
   const location=[row.City,row.Region,[row.Country,row['Country Code']].find(known)].filter(known).join(', ') || 'Not returned';
   for(const [title,value,note] of [
     ['Network owner',[row.ASN,row.Provider].filter(known).join(' · ') || 'Unknown','Source: '+(row['Provider Source'] || 'Unknown')],
-    ['Approximate location',location,'Source: '+(row['Geolocation Source'] || 'Not present in this saved report')],
+    ['Approximate location',location,'Source: '+(row['Geolocation Source'] || 'Not present in this saved report')+(row['Geolocation Source']==='MaxMind GeoLite2'?' · Database '+row['MaxMind Database Date']+(known(row['Accuracy Radius km'])?' · Accuracy radius '+row['Accuracy Radius km']+' km':''):'')],
     ['Registered allocation',[row.CIDR,row['Network Name']].filter(known).join(' · ') || 'Unknown','RDAP: '+(row['RDAP Status'] || 'Not present in this saved report')],
     ['Report completeness',row['Lookup Health'] || 'UNKNOWN','Scores and threat/listing results remain separate signals.']
   ]) {const card=element('article');card.append(element('h4','',title),element('strong','',value),element('small','',note));facts.append(card);}
   network.append(facts,element('p','risk-footnote','IP geolocation is approximate and does not identify a person or a precise address. Registered allocation country may differ from geolocation.'));
+  if(row['Geolocation Source']==='MaxMind GeoLite2') {
+    const attribution=element('p','risk-footnote','This product includes GeoLite2 Data created by MaxMind, available from ');
+    const link=element('a','','MaxMind');link.href='https://www.maxmind.com';link.target='_blank';link.rel='noreferrer';attribution.append(link);network.append(attribution);
+  }
   $('detail-content').replaceChildren(risk,network,comparison,dl);
   setDial('detail-ipqs',row['IPQS Fraud Score'],row['IPQS Status']==='NOT_CONFIGURED');
   setDial('detail-pc',row['PC Risk']);

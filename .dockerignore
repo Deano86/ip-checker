@@ -6,6 +6,7 @@
 ip-addresses.txt
 *token*.txt
 __pycache__
+*.mmdb
 tests
 
 # Private database, sessions, history and backups

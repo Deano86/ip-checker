@@ -5,10 +5,13 @@ import sys
 import csv
 import ipaddress
 import math
+import maxmind_geo
 
 LEGACY_COLUMNS = ['IP Address','CIDR','ASN','Provider','IP2 Proxy','PC Anonymous','PC VPN','PC Proxy','PC Tor','PC Hosting','PC Network Type','PC Risk','PC Confidence','Spamhaus Lists','Spamhaus Status','Anonymisation','Hosting','Threat Listing','Review','IPQS Status','IPQS Fraud Score','IPQS Proxy','IPQS VPN','IPQS Tor','IPQS Recent Abuse','IPQS Bot','IPinfo Status','IP2Location Status','Proxycheck Status','IPQS Detail','ASN Source','Provider Source','Lookup Health','IPQS Active VPN','IPQS Active Tor','IPQS Connection Type','IPQS Abuse Frequency','IPQS Verified Crawler','IPQS Hostname','IPQS Country']
 EXTRA_COLUMNS = ['Country Code','Country','Region','City','Timezone','Latitude','Longitude','Geolocation Source','RDAP Status','Network Name','Network Handle','Network Start','Network End','Network Country','Network Registered','Network Updated','Network Status','RDAP Source']
-REPORT_COLUMNS = LEGACY_COLUMNS + EXTRA_COLUMNS
+LEGACY_REPORT_COLUMNS = LEGACY_COLUMNS + EXTRA_COLUMNS
+MAXMIND_COLUMNS = ['MaxMind Status', 'MaxMind Database Date', 'Accuracy Radius km']
+REPORT_COLUMNS = LEGACY_REPORT_COLUMNS + MAXMIND_COLUMNS
 
 
 def text(value):
@@ -64,11 +67,12 @@ def number(value, minimum, maximum):
         return 'UNKNOWN'
 
 
-def geolocation(info, ip2, ipqs):
+def geolocation(info, ip2, ipqs, maxmind=None):
     # Keep the location bundle from one source; do not combine one provider's
     # city with another provider's coordinates.
     result = {key: 'UNKNOWN' for key in EXTRA_COLUMNS[:8]}
     for data, name, fields in (
+        (maxmind if isinstance(maxmind, dict) and maxmind.get('status') == 'OK' else None, 'MaxMind GeoLite2', ('country_code','country_name','region_name','city_name','time_zone','latitude','longitude')),
         (ip2, 'IP2Location', ('country_code','country_name','region_name','city_name','time_zone','latitude','longitude')),
         (info, 'IPinfo', ('country',None,'region','city','timezone',None,None)),
         (ipqs, 'IPQS', ('country_code',None,'region','city','timezone','latitude','longitude')),
@@ -140,7 +144,7 @@ def rdap_fields(data, ip):
     return result
 
 
-def enrich(info, lite, ip2, pc, ipqs, ip, rdap=None):
+def enrich(info, lite, ip2, pc, ipqs, ip, rdap=None, maxmind=None):
     sources = [(info, 'IPinfo'), (lite, 'IPinfo Lite'), (ip2, 'IP2Location')]
     entry = pc.get(ip, {}) if isinstance(pc, dict) else {}
     network = entry.get('network', {}) if isinstance(entry, dict) else {}
@@ -202,7 +206,11 @@ def enrich(info, lite, ip2, pc, ipqs, ip, rdap=None):
     if result['PC Risk'] != 'UNKNOWN' and float(result['PC Risk']) > 25:
         review.append('PC_HIGH_RISK' if float(result['PC Risk']) > 75 else 'PC_ELEVATED_RISK')
     result['Score Review'] = '+'.join(review)
-    result.update(geolocation(info, ip2, ipqs))
+    result.update(geolocation(info, ip2, ipqs, maxmind))
+    maxmind = maxmind if isinstance(maxmind, dict) else {}
+    result['MaxMind Status'] = maxmind.get('status', 'NOT_INSTALLED')
+    result['MaxMind Database Date'] = maxmind.get('database_date', 'UNKNOWN')
+    result['Accuracy Radius km'] = number(maxmind.get('accuracy_radius'), 0, 10000) if result['Geolocation Source'] == 'MaxMind GeoLite2' else 'UNKNOWN'
     if rdap is not None:
         result.update(rdap_fields(rdap, ip))
         if result['RDAP Status'] != 'OK':
@@ -220,4 +228,5 @@ if __name__ == '__main__':
             print('UNKNOWN')
     else:
         data = json.load(sys.stdin)
+        data['maxmind'] = maxmind_geo.lookup(data['ip'])
         print(json.dumps(enrich(**data)))
