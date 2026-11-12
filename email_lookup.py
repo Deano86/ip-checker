@@ -1,14 +1,118 @@
-"""IPQS email reputation lookups. Only selected report fields leave the server."""
+"""IPQS reputation and Kickbox verification. Only selected report fields leave the server."""
 import json
 import re
 import socket
+import math
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
+from urllib.parse import urlencode
 
 
 class LookupError(Exception):
     pass
+
+
+def selected_providers(selection, keys):
+    choices = {'ipqs': ['IPQS'], 'kickbox': ['Kickbox'], 'both': ['IPQS', 'Kickbox']}
+    if selection == 'configured':
+        names = [name for name in ('IPQS', 'Kickbox') if keys.get('IPQS_KEY' if name == 'IPQS' else 'KICKBOX_KEY')]
+    elif isinstance(selection, str) and selection in choices:
+        names = choices[selection]
+    else:
+        raise ValueError('Choose configured providers, IPQS, Kickbox or both.')
+    if not names:
+        raise LookupError('Add IPQS_KEY or KICKBOX_KEY to the server .secrets file to enable email lookups.')
+    for name in names:
+        key_name = 'IPQS_KEY' if name == 'IPQS' else 'KICKBOX_KEY'
+        if not keys.get(key_name):
+            raise LookupError('Add '+key_name+' to the server .secrets file for the selected provider.')
+    return names
+
+
+def normalise_kickbox(email, data):
+    if not isinstance(data, dict) or data.get('success') is not True:
+        raise LookupError('Kickbox rejected the lookup. Check API access, key and available credits.')
+    result = data.get('result')
+    if not isinstance(result, str) or result not in ('deliverable', 'undeliverable', 'risky', 'unknown'):
+        raise LookupError('Kickbox returned an invalid verification result.')
+    reasons = {'invalid_email', 'invalid_domain', 'rejected_email', 'accepted_email', 'low_quality',
+               'low_deliverability', 'no_connect', 'timeout', 'invalid_smtp', 'unavailable_smtp', 'unexpected_error', 'accept_all', 'disposable'}
+    reason = data.get('reason') if isinstance(data.get('reason'), str) and data['reason'] in reasons else 'UNKNOWN'
+    score = data.get('sendex')
+    score = str(score) if type(score) in (int, float) and math.isfinite(score) and 0 <= score <= 1 else 'UNKNOWN'
+    suggestion = data.get('did_you_mean')
+    try:
+        suggestion = validate_email(suggestion) if suggestion else 'NONE'
+    except ValueError:
+        suggestion = 'UNKNOWN'
+    report = {'Kickbox Status': 'OK', 'Kickbox Result': result, 'Kickbox Reason': reason,
+              'Kickbox Sendex': score, 'Kickbox Disposable': flag(data.get('disposable')),
+              'Kickbox Accept All': flag(data.get('accept_all')), 'Kickbox Role': flag(data.get('role')),
+              'Kickbox Free': flag(data.get('free')), 'Kickbox Suggested Email': suggestion}
+    partial = result == 'unknown' or reason == 'UNKNOWN' or score == 'UNKNOWN' or any(report[k] == 'UNKNOWN' for k in ('Kickbox Disposable', 'Kickbox Accept All', 'Kickbox Role', 'Kickbox Free'))
+    report['Kickbox Lookup Health'] = 'PARTIAL' if partial else 'OK'
+    report['Kickbox Notes'] = 'Sendex is email quality from 0 to 1; higher is better. It is not a fraud score or delivery probability.'
+    if data.get('accept_all') is True:
+        report['Kickbox Notes'] += ' Accept-all server: an individual mailbox cannot be confirmed.'
+    if result == 'unknown':
+        report['Kickbox Notes'] += ' Verification was inconclusive; do not treat this as an invalid mailbox.'
+    return report
+
+
+class NoKickboxRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise URLError('Redirect refused')
+
+
+def lookup_kickbox(email, key):
+    # Match Kickbox's official SDK header authentication; never put keys in URLs.
+    request = Request('https://api.kickbox.com/v2/verify?' + urlencode({'email': email, 'timeout': 10000}),
+                      headers={'Accept': 'application/json', 'Authorization': 'token '+key, 'User-Agent': 'IPChecker-EmailLookup/1.0'})
+    try:
+        with build_opener(NoKickboxRedirects()).open(request, timeout=15) as response:
+            body = response.read(1_000_001)
+        if len(body) > 1_000_000:
+            raise LookupError('Kickbox returned an oversized response.')
+        return normalise_kickbox(email, json.loads(body))
+    except HTTPError as error:
+        messages = {401: 'Kickbox authentication failed. Check KICKBOX_KEY in .secrets.',
+                    403: 'Kickbox denied access. Check API permissions and credits.',
+                    429: 'Kickbox quota or rate limit reached. Check credits and try later.'}
+        raise LookupError(messages.get(error.code, 'Kickbox request failed (HTTP '+str(error.code)+').')) from None
+    except (TimeoutError, socket.timeout):
+        raise LookupError('Kickbox lookup timed out. Try again later.') from None
+    except (URLError, OSError):
+        raise LookupError('Could not reach Kickbox. Check server DNS and outbound HTTPS access.') from None
+    except (ValueError, UnicodeError):
+        raise LookupError('Kickbox returned an unreadable response.') from None
+
+
+def lookup_selected(email, keys, names):
+    report = {'Email Address': email, 'Provider': ' + '.join(names)}
+    errors = []
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = {name: pool.submit(lookup if name == 'IPQS' else lookup_kickbox, email,
+                                    keys['IPQS_KEY' if name == 'IPQS' else 'KICKBOX_KEY']) for name in names}
+        for name, future in futures.items():
+            try:
+                fields = future.result()
+                report.update(fields)
+                report[name+' Status'] = 'OK'
+            except LookupError as error:
+                report[name+' Status'] = 'ERROR'
+                report[name+' Error'] = str(error)
+                errors.append(str(error))
+    if len(errors) == len(names):
+        raise LookupError(' '.join(errors))
+    report['Provider'] = ' + '.join(names)
+    partial = bool(errors) or report.get('Lookup Health') == 'PARTIAL' or report.get('Kickbox Lookup Health') == 'PARTIAL'
+    report['Lookup Health'] = 'PARTIAL' if partial else 'OK'
+    notes = [report.get('Lookup Notes', ''), report.get('Kickbox Notes', ''), *errors]
+    report['Lookup Notes'] = ' '.join(note for note in notes if note)
+    report['Checked At'] = datetime.now(timezone.utc).isoformat()
+    return report
 
 
 def validate_email(value):

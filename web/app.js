@@ -8,7 +8,8 @@ const providers = [
   {name:'IP2Location',logo:'i2',description:'Proxy intelligence'},
   {name:'proxycheck.io',logo:'pc',description:'VPN, Tor & hosting'},
   {name:'Spamhaus',logo:'sh',description:'Threat & reputation lists'},
-  {name:'IPQS',logo:'iq',description:'Fraud score & abuse · optional'}
+  {name:'IPQS',logo:'iq',description:'Fraud score & abuse · optional'},
+  {name:'Kickbox',logo:'kb',description:'Email deliverability & Sendex · optional'}
 ];
 
 function element(tag, className, text) {
@@ -258,13 +259,27 @@ function renderEmail(report,saved=false) {
   emailResult=report;
   $('email-report').hidden=false;
   $('email-result-address').textContent=report['Email Address'];
-  $('email-result-caption').textContent='IPQS email reputation · '+(saved?'Saved report':'Fresh lookup')+(report['Checked At']?' · '+new Date(report['Checked At']).toLocaleString():'');
+  $('email-result-caption').textContent=(report.Provider || 'IPQS')+' · '+(saved?'Saved report':'Fresh lookup')+(report['Checked At']?' · '+new Date(report['Checked At']).toLocaleString():'');
+  $('email-ipqs-card').hidden=report.Provider==='Kickbox';
+  $('email-kickbox-card').hidden=!Object.keys(report).some(key=>key.startsWith('Kickbox '));
   setDial('email',report['Fraud Score']);
-  $('email-partial').hidden=report['Lookup Health']!=='PARTIAL' && report['Catch All']!=='YES';
+  const quality=IPSignals.score(report['Kickbox Sendex']);
+  const sendex=quality!==null && quality<=1?quality:null;
+  const qualityDial=$('dial-kickbox');
+  qualityDial.classList.toggle('unknown',sendex===null);
+  qualityDial.style.setProperty('--needle-angle',(sendex===null?0:-135+sendex*270)+'deg');
+  qualityDial.setAttribute('role',sendex===null?'group':'meter');
+  qualityDial.setAttribute('aria-valuetext',sendex===null?'Unknown':sendex+' out of 1; higher is better');
+  if(sendex===null) qualityDial.removeAttribute('aria-valuenow'); else qualityDial.setAttribute('aria-valuenow',sendex);
+  $('dial-kickbox-value').textContent=sendex===null?'—':String(sendex);
+  $('dial-kickbox-caption').textContent=sendex===null?'Unknown':'out of 1 · quality';
+  $('kickbox-result').textContent=report['Kickbox Result'] || report['Kickbox Status'] || 'UNKNOWN';
+  $('email-partial').hidden=report['Lookup Health']!=='PARTIAL' && report['Catch All']!=='YES' && report['Kickbox Accept All']!=='YES';
   $('email-partial').textContent=report['Lookup Notes'] || 'Some email checks are unavailable. Unknown fields are not negative results.';
-  $('email-review').textContent=report.Review || 'Review the returned fields; a missing value is not a negative detection.';
+  $('email-review').textContent=[report.Review,report['Kickbox Result']?'Kickbox: '+report['Kickbox Result']+' ('+report['Kickbox Reason']+').':''].filter(Boolean).join(' · ') || 'Review the returned fields; a missing value is not a negative detection.';
   $('email-highlights').replaceChildren();
-  for(const key of ['Valid','Disposable','Deliverability','Recent Abuse']) {
+  const highlights=report.Provider==='Kickbox'?['Kickbox Result','Kickbox Disposable','Kickbox Accept All','Kickbox Role']:['Valid','Disposable','Deliverability','Recent Abuse'];
+  for(const key of highlights) {
     const box=element('div','email-highlight'); box.append(element('span','',key),element('strong','',report[key] || 'UNKNOWN')); $('email-highlights').append(box);
   }
   $('email-timeout-note').hidden=report['Verification Timed Out']!=='YES';
@@ -276,7 +291,7 @@ $('email-form').addEventListener('submit',async event=> {
   $('email-error').hidden=true; $('email-report').hidden=true; emailResult=null;
   $('email-run').disabled=true; $('email-progress').hidden=false;
   try {
-    const result=await api('/api/email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:$('email-address').value})});
+    const result=await api('/api/email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:$('email-address').value,provider:$('email-provider').value})});
     renderEmail(result.report);
   } catch(error) {$('email-error').textContent=error.message; $('email-error').hidden=false;}
   finally {$('email-run').disabled=false; $('email-progress').hidden=true;}

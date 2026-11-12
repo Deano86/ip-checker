@@ -32,7 +32,7 @@ ROOT = Path(__file__).resolve().parent
 DB = None
 AUTH = None
 KEYS = {'IPinfo': 'IPINFO_KEY', 'IP2Location': 'IP2_KEY',
-        'proxycheck.io': 'PROXY_KEY', 'Spamhaus': 'SPAMHAUS_KEY', 'IPQS': 'IPQS_KEY'}
+        'proxycheck.io': 'PROXY_KEY', 'Spamhaus': 'SPAMHAUS_KEY', 'IPQS': 'IPQS_KEY', 'Kickbox': 'KICKBOX_KEY'}
 
 
 def secret_values(path=None):
@@ -56,7 +56,7 @@ def secret_values(path=None):
 def configuration():
     """Report presence only; never return secrets or execute the config."""
     values = secret_values()
-    providers = [{'name': name, 'configured': bool(values.get(key)), 'required': name != 'IPQS'} for name, key in KEYS.items()]
+    providers = [{'name': name, 'configured': bool(values.get(key)), 'required': name not in ('IPQS', 'Kickbox')} for name, key in KEYS.items()]
     missing = [cmd for cmd in ('bash', 'curl', 'jq', 'dig', 'python3') if not shutil.which(cmd)]
     return {'providers': providers, 'missing_dependencies': missing,
             'ready': all(p['configured'] for p in providers if p['required']) and not missing}
@@ -566,13 +566,15 @@ class Handler(BaseHTTPRequestHandler):
                     DOMAIN_SLOTS.release()
             if path == '/api/email':
                 email = email_lookup.validate_email(data.get('email'))
-                key = secret_values().get('IPQS_KEY')
-                if not key:
-                    return self.send(409, {'error': 'Add IPQS_KEY to the server .secrets file to enable email lookups.'})
+                keys = secret_values()
+                try:
+                    names = email_lookup.selected_providers(data.get('provider', 'configured'), keys)
+                except email_lookup.LookupError as error:
+                    return self.send(409, {'error': str(error)})
                 if not EMAIL_SLOTS.acquire(blocking=False):
                     return self.send(429, {'error': 'Email lookups are busy. Try again shortly.'})
                 try:
-                    result = {'report': email_lookup.lookup(email, key)}
+                    result = {'report': email_lookup.lookup_selected(email, keys, names)}
                     result['history_id'] = DB.save(user['id'], 'email', email, result)
                     DB.audit(user['id'], 'lookup.email', result['history_id'])
                     return self.send(200, result)

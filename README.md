@@ -30,7 +30,7 @@ your working files rather than replacing them with templates.
 | File | What to edit before use | When needed |
 | --- | --- | --- |
 | [`.env.example`](.env.example) → `.env` | Allowed hostname, secure-cookie flag and trusted proxy IP/CIDRs. Optional Docker UID/GID. | Defaults work for local HTTP/SSH access. Change these for an HTTPS domain or reverse proxy. |
-| [`.secrets.example`](.secrets.example) → `.secrets` | IPINFO_KEY, IP2_KEY, PROXY_KEY and SPAMHAUS_KEY; optionally IPQS_KEY. | Four keys are required for IP scans; IPQS enables IPQS scoring and email lookups. |
+| [`.secrets.example`](.secrets.example) → `.secrets` | IPINFO_KEY, IP2_KEY, PROXY_KEY and SPAMHAUS_KEY; optionally IPQS_KEY and KICKBOX_KEY. | Four keys are required for IP scans; IPQS enables fraud scoring/email checks; Kickbox enables email verification independently. |
 | `.secrets` | WEBAUTHN_RP_ID and WEBAUTHN_ORIGIN must match the browser hostname and exact origin. | Passkeys. Keep localhost defaults for the documented SSH tunnel; use your HTTPS domain for shared access. |
 | `.secrets` | AUTH_ENCRYPTION_KEY can stay empty. The app creates private `data/auth.key`. | No manual key creation required. Back up the generated key with the database. |
 | [`.mail_secrets.example`](.mail_secrets.example) → `.mail_secrets` | APP_URL plus SMTP_HOST, SMTP_PORT, SMTP_SECURITY, SMTP_USER, SMTP_PASSWORD and SMTP_FROM. | Email verification and password resets. Keep the file present even if SMTP values are blank. |
@@ -243,8 +243,9 @@ Old saved reports remain readable; run a fresh scan to populate the new fields.
   observed-domain signal. A ZRD result alone is not a malware verdict. The
   summary distinguishes a DBL listing, recent observation, completed negative
   checks and unavailable checks; it does not assign a numerical domain score.
-- **Email:** validity, disposable/catch-all flags, deliverability and fraud
-  score come from IPQS. The response must explicitly confirm success. Missing
+- **Email:** IPQS supplies validity, disposable/catch-all flags, deliverability and fraud
+  score; optional Kickbox supplies verification result/reason and Sendex quality on
+  its own scale. Select either or both. Responses must explicitly confirm success. Missing
   core fields and timeouts get an incomplete-data notice; a timed-out negative
   mailbox check stays UNKNOWN. Catch-all servers cannot confirm an individual
   mailbox. The report includes a review summary, source and checked-at time.
@@ -723,18 +724,40 @@ Saved history and lookup caching are not included in this update.
 
 ## Email lookup and dark mode
 
-Use **Email lookup** in the sidebar to check one email address with IPQS.
-It uses the same `IPQS_KEY` from `.secrets`, independently of the four
-required IP scan providers. Your IPQS account must have email API access
-and available email lookup credits. Submitted addresses are sent to IPQS
-using a server-side HTTPS POST; the API key is sent in a request header.
-No email is sent by the dashboard itself.
+Use **Email lookup** in the sidebar with **Kickbox**, **IPQS**, or both.
+Add the keys you want to use to your private `.secrets` (never commit real keys):
 
-The report includes validity, disposable status, fraud risk, deliverability,
-recent abuse, DNS/catch-all signals and other selected reputation fields.
-Absent or plan-restricted fields remain UNKNOWN. A timed-out mailbox check
-does not become a confirmed invalid address. The report can be exported to
-CSV; email input/results are not persisted to disk or browser storage.
+```bash
+IPQS_KEY='your-ipqs-key' # optional: IP/email fraud intelligence
+KICKBOX_KEY='your-kickbox-key' # optional: email verification
+```
+
+Rebuild with `docker compose up -d --build`, then refresh the dashboard.
+Existing installations only need to add `KICKBOX_KEY`; no database migration or
+extra Python package is required. Kickbox is optional and does not affect IP scans.
+The Providers page reports key presence, not whether your API access/credits work.
+
+Select **Kickbox only**, **IPQS only**, **Kickbox + IPQS**, or **All configured email
+providers**. The default uses both when both keys are configured. Each selected
+provider receives the address and uses its own verification credits. Your account
+must have API access and available credits. No email is sent by this dashboard.
+Requests use HTTPS and header authentication; keys never reach the browser.
+
+Kickbox reports deliverable/undeliverable/risky/unknown, the reason, disposable,
+accept-all, role/free-mail flags, suggested email and **Sendex (0–1, higher is better)**.
+Sendex is email quality, not a fraud score or a delivery probability. It is shown
+on its own dial, separately from **IPQS fraud risk (0–100, higher is riskier)**.
+Unknown/inconclusive checks do not confirm an invalid mailbox; accept-all does not
+confirm that an individual mailbox exists. Missing fields remain UNKNOWN.
+
+When both providers are selected, one failing provider does not discard the other
+provider's results. The report shows each status/error and becomes PARTIAL. If all
+selected providers fail, a safe error is shown. Provider messages and API keys are
+not copied to the report. Each provider's findings stay separate; scores are not averaged.
+Reports, selected providers, statuses and timestamps are saved to your private
+lookup history and included in the CSV export. Reopening history uses no credits.
+
+Reference: [Kickbox response fields](https://github.com/kickboxio/kickbox-python#response-information).
 
 Dark mode is the default. The top bar has a Theme menu with four dark palettes
 and an optional Light appearance; the browser remembers your selection.

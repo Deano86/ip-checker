@@ -57,10 +57,15 @@ class InputTests(unittest.TestCase):
                 self.assertFalse(ipqs['required'])
                 self.assertFalse(ipqs['configured'])
                 with config.open('a') as handle:
-                    handle.write("IPQS_KEY='private-ipqs-sentinel'\n")
+                    handle.write("IPQS_KEY='private-ipqs-sentinel'\nKICKBOX_KEY='private-kickbox-sentinel'\n")
                 result = dashboard.configuration()
                 self.assertTrue(next(p for p in result['providers'] if p['name'] == 'IPQS')['configured'])
                 self.assertNotIn('private-ipqs-sentinel', json.dumps(result))
+                kickbox=next(p for p in result['providers'] if p['name']=='Kickbox')
+                self.assertTrue(kickbox['configured'])
+                self.assertFalse(kickbox['required'])
+                self.assertTrue(result['ready'])
+                self.assertNotIn('private-kickbox-sentinel',json.dumps(result))
 
 
 class HTTPTests(unittest.TestCase):
@@ -106,7 +111,6 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(len(events), 2)
         self.assertTrue(all(event['path'] == '/login' and event['status'] == 200 for event in events))
         self.assertNotIn('private-', json.dumps(events))
-
     def test_home_and_secrets_are_not_served(self):
         status, body, headers = self.request('/')
         self.assertEqual(status, 200)
@@ -162,6 +166,22 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(self.request('/api/email', {'email': 'test@example.com'})[0], 409)
         self.assertEqual(self.request('/api/email', {'email': 'invalid'})[0], 400)
         self.assertEqual(self.request('/api/email', {'email': 'test@example.com'}, {'Origin': 'https://evil.example'})[0], 403)
+
+    def test_kickbox_email_works_without_ip_scan_or_ipqs_keys(self):
+        with patch.object(dashboard,'secret_values',return_value={'KICKBOX_KEY':'private-kickbox-sentinel'}), patch.object(dashboard.email_lookup,'lookup_kickbox',return_value={'Kickbox Result':'deliverable','Kickbox Sendex':'0.9','Kickbox Lookup Health':'OK'}) as lookup:
+            status,body,_=self.request('/api/email',{'email':'test@example.com','provider':'kickbox'})
+        self.assertEqual(status,200)
+        result=json.loads(body)
+        self.assertEqual(result['report']['Provider'],'Kickbox')
+        self.assertEqual(result['report']['Kickbox Sendex'],'0.9')
+        self.assertIn('history_id',result)
+        self.assertNotIn(b'private-kickbox-sentinel',body)
+        lookup.assert_called_once_with('test@example.com','private-kickbox-sentinel')
+
+    def test_email_invalid_provider_and_explicit_missing_key(self):
+        with patch.object(dashboard,'secret_values',return_value={'KICKBOX_KEY':'test'}):
+            self.assertEqual(self.request('/api/email',{'email':'test@example.com','provider':'ipqs'})[0],409)
+            self.assertEqual(self.request('/api/email',{'email':'test@example.com','provider':'invalid'})[0],400)
 
     def test_email_provider_failure_is_reported(self):
         with patch.object(dashboard, 'secret_values', return_value={'IPQS_KEY': 'test'}), patch.object(dashboard.email_lookup, 'lookup', side_effect=dashboard.email_lookup.LookupError('IPQS denied email API access.')):
@@ -224,7 +244,6 @@ class AccessLogTests(unittest.TestCase):
         output.assert_not_called()
 
 
-
 class ForwardedAddressTests(unittest.TestCase):
     def client(self, peer, forwarded=None, trusted=''):
         handler = dashboard.Handler.__new__(dashboard.Handler)
@@ -253,7 +272,5 @@ class ForwardedAddressTests(unittest.TestCase):
         for value in (None, '', 'unknown', '198.51.100.5, garbage', '198.51.100.5,', 'x'*2049, ','.join(['198.51.100.5']*33), 'fe80::1%scope'):
             with self.subTest(value=value):
                 self.assertEqual(self.client('192.0.2.10', value, '192.0.2.10'), '192.0.2.10')
-
-
 if __name__ == '__main__':
     unittest.main()
